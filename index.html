@@ -261,16 +261,19 @@ function addDaysTH(isoOrDate,n){
   d.setDate(d.getDate()+n);
   return`${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
 }
-// Auto-format DD/MM/YYYY as user types
-document.addEventListener('input',function(e){
-  if(!e.target.classList.contains('date-th'))return;
-  const sel=e.target.selectionStart;
-  let v=e.target.value.replace(/[^\d]/g,'');
-  if(v.length>2)v=v.slice(0,2)+'/'+v.slice(2);
-  if(v.length>5)v=v.slice(0,5)+'/'+v.slice(5);
-  if(v.length>10)v=v.slice(0,10);
-  e.target.value=v;
-});
+// Thai date label helpers
+const THAI_MONTHS=['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+function thaiDateLabel(iso){
+  if(!iso)return'';
+  const dt=new Date(iso);
+  if(isNaN(dt))return'';
+  return`${dt.getDate()} ${THAI_MONTHS[dt.getMonth()]} ${dt.getFullYear()+543}`;
+}
+function syncThaiLabel(id){
+  const el=document.getElementById(id);
+  const lbl=document.getElementById(id+'-th');
+  if(el&&lbl)lbl.textContent=thaiDateLabel(el.value);
+}
 function diffDays(a,b){return Math.round((new Date(b)-new Date(a))/(86400000));}
 
 // ==================== DEFAULT DRUGS ====================
@@ -434,7 +437,7 @@ function vAssess(){
       <div class="fgrid">
         <div class="fg"><label>HN *</label><input id="a-hn" placeholder="รหัสผู้ป่วย" oninput="aFillName()"></div>
         <div class="fg"><label>ชื่อ-สกุล *</label><input id="a-name" placeholder="ชื่อ นามสกุล"></div>
-        <div class="fg"><label>วันที่</label><input type="text" id="a-date" class="date-th" placeholder="วว/ดด/ปปปป" value="${todayTH()}"></div>
+        <div class="fg"><label>วันที่</label><input type="date" id="a-date" value="${today()}" onchange="syncThaiLabel('a-date')"><div id="a-date-th" style="font-size:12px;color:var(--p);margin-top:3px;font-weight:600;"></div></div>
         <div class="fg"><label>บันทึกโดย</label>
           <select id="a-by">
             <option value="patient">ผู้ป่วย (กรอกเอง)</option>
@@ -505,6 +508,7 @@ function vAssess(){
       <button class="btn bo" style="margin-top:16px;" onclick="vAssess()">กรอกใหม่</button>
     </div>
   </div>`);
+  setTimeout(()=>syncThaiLabel('a-date'),0);
   document.getElementById('a-by').addEventListener('change',function(){
     const isOther=this.value!=='patient'&&this.value!=='nurse';
     document.getElementById('a-caregiver-wrap').style.display=isOther?'flex':'none';
@@ -683,7 +687,7 @@ function submitAssess(){
   const night=+(document.getElementById('a-night').value||0);
   const act=calcACT();const adh=calcAdh();
   const rec={id:uid(),type:'assessment',hn,name,
-    date:parseTH(document.getElementById('a-date')?.value||todayTH()),
+    date:document.getElementById('a-date')?.value||today(),
     by:document.getElementById('a-by').value,
     caregiver:document.getElementById('a-caregiver')?.value||'',
     nurseName:document.getElementById('a-nurse-name')?.value||'',
@@ -1071,8 +1075,8 @@ function vPhDisp(){
     <div class="fgrid" style="margin-bottom:14px;">
       <div class="fg"><label>HN</label><input id="ph-hn" placeholder="HN ผู้ป่วย" oninput="phFillName()"></div>
       <div class="fg"><label>ชื่อ-สกุล</label><input id="ph-name" placeholder="ชื่อ-สกุล"></div>
-      <div class="fg"><label>วันที่จ่าย</label><input type="text" id="ph-date" class="date-th" placeholder="วว/ดด/ปปปป" value="${todayTH()}"></div>
-      <div class="fg"><label>วันนัดครั้งถัดไป</label><input type="text" id="ph-next" class="date-th" placeholder="วว/ดด/ปปปป" value="${addDaysTH(today(),90)}"></div>
+      <div class="fg"><label>วันที่จ่าย</label><input type="date" id="ph-date" value="${today()}" onchange="syncThaiLabel('ph-date')"><div id="ph-date-th" style="font-size:12px;color:var(--p);margin-top:3px;font-weight:600;"></div></div>
+      <div class="fg"><label>วันนัดครั้งถัดไป</label><input type="date" id="ph-next" value="${addDays(today(),90).toISOString().split('T')[0]}" onchange="syncThaiLabel('ph-next')"><div id="ph-next-th" style="font-size:12px;color:var(--p);margin-top:3px;font-weight:600;"></div></div>
     </div>
     <div id="ph-doctor-note-banner"></div>
     <div class="al ali"><span>ℹ️</span><span>เลือกยาพ่นที่แพทย์สั่ง ระบบจะคำนวณจำนวนกระบอกและวันเปิดใช้-หมดของแต่ละกระบอก</span></div>
@@ -1086,6 +1090,7 @@ function vPhDisp(){
   </div>
   <div id="sticker-area" style="display:none"></div>`);
   calcItems=[];
+  setTimeout(()=>{syncThaiLabel('ph-date');syncThaiLabel('ph-next');},0);
 }
 function openPhDisp(hn,vid){
   phHN=hn;phVisitId=vid;
@@ -1096,7 +1101,7 @@ function openPhDisp(hn,vid){
     document.getElementById('ph-name').value=v.name||'';
     // Set next appointment date from visit if available
     if(v.nextAppt){
-      setTH('ph-next',v.nextAppt);
+      document.getElementById('ph-next').value=v.nextAppt||''; syncThaiLabel('ph-next');
     }
   }
   // Priority: import drugs > history > blank
@@ -1206,7 +1211,7 @@ function addPhDrug(prefill){
       </div>
       <div id="${id}-cont-wrap" style="display:none" class="fg">
         <label>📅 คาดว่ากระบอกล่าสุดจะหมดวันที่</label>
-        <input type="text" id="${id}-expempty" class="date-th" value="${prefill?.lastEmptyDate?setTHVal(prefill.lastEmptyDate):''}" oninput="calcAll()" placeholder="วว/ดด/ปปปป">
+        <input type="date" id="${id}-expempty" value="${prefill?.lastEmptyDate||''}" oninput="calcAll()" onchange="syncThaiLabel('${id}-expempty')"><div id="${id}-expempty-th" style="font-size:12px;color:var(--p);margin-top:3px;font-weight:600;"></div>
       </div>
     </div>
     <div id="${id}-result" style="border-radius:6px;padding:9px 12px;margin-top:6px;font-size:13px;"></div>
@@ -1248,8 +1253,8 @@ function calcSingle(id){
   const freq=+(document.getElementById(id+'-freq')?.value||2);
   const ppc=+(document.getElementById(id+'-ppc')?.value||200);
   const mode=document.getElementById(id+'-mode')?.value||'new';
-  const nextAppt=parseTH(document.getElementById('ph-next')?.value||'')||addDays(today(),90).toISOString().split('T')[0];
-  const dispDate=parseTH(document.getElementById('ph-date')?.value||'')||today();
+  const nextAppt=document.getElementById('ph-next')?.value||addDays(today(),90).toISOString().split('T')[0];
+  const dispDate=document.getElementById('ph-date')?.value||today();
   const daily=dose*freq;
   const daysToAppt=Math.max(1,diffDays(dispDate,nextAppt));
   let canisters=[];
@@ -1266,7 +1271,7 @@ function calcSingle(id){
   }
 
   if(mode==='cont'){
-    const expEmpty=parseTH(document.getElementById(id+'-expempty')?.value||'');
+    const expEmpty=document.getElementById(id+'-expempty')?.value||'';
     if(!expEmpty) return {drug:drug?.name,daily,daysToAppt,canisters:[],noDispense:false,noDate:true};
     const expEmptyD=new Date(expEmpty);
     const nextApptD=new Date(nextAppt);
@@ -1361,14 +1366,14 @@ function saveDispensing(){
       freq:+(document.getElementById(id+'-freq')?.value||2),
       ppc:+(document.getElementById(id+'-ppc')?.value||200),
       mode:document.getElementById(id+'-mode')?.value||'new',
-      expEmpty:parseTH(document.getElementById(id+'-expempty')?.value||'')||null,
+      expEmpty:document.getElementById(id+'-expempty')?.value||null,
       qty:+(document.getElementById(id+'-qty')?.value||1),
       isPRN:document.getElementById(id+'-prn-wrap')?.style.display!=='none',
       lastEmptyDate,canisters:thisCans
     };
   });
-  DB.dispensing.push({id:uid(),hn,name,date:parseTH(document.getElementById('ph-date')?.value||todayTH()),
-    nextAppt:parseTH(document.getElementById('ph-next')?.value||''),drugs,
+  DB.dispensing.push({id:uid(),hn,name,date:document.getElementById('ph-date')?.value||today(),
+    nextAppt:document.getElementById('ph-next')?.value||'',drugs,
     noDispense:cResult.noDispAll||false,
     createdAt:new Date().toISOString()});
   if(phVisitId){const v=DB.visits.find(x=>x.id===phVisitId);if(v){v.status='done';v.pharmAt=new Date().toISOString();}}
@@ -1379,7 +1384,7 @@ function saveDispensing(){
 function printSticker(){
   const hn=document.getElementById('ph-hn')?.value?.trim()||'–';
   const name=document.getElementById('ph-name')?.value?.trim()||'–';
-  const nextAppt=parseTH(document.getElementById('ph-next')?.value||'');
+  const nextAppt=document.getElementById('ph-next')?.value||'';
   const cResult=window._calcResult||{};
   const cans=cResult.allCanisters||[];
   const noDisp=cResult.noDispAll||false;
