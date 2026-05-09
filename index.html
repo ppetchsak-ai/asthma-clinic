@@ -110,6 +110,14 @@ tr:hover td{background:#f8fbff;}
 .sticker-preview{border:2px dashed var(--bd);border-radius:8px;padding:16px;margin-top:12px;}
 .sticker-item{border:1.5px solid var(--p);border-radius:7px;padding:12px 14px;margin-bottom:8px;background:#fff;position:relative;}
 .sticker-item.existing{border-color:var(--ac);background:#fff8f0;}
+.atab-nav{display:flex;margin-bottom:0;border-radius:10px 10px 0 0;overflow:hidden;border:1.5px solid var(--bd);border-bottom:none;}
+.atab-btn{flex:1;padding:10px 4px;font-size:12.5px;font-weight:700;border:none;cursor:pointer;background:#e8f2fc;color:var(--pd);border-right:1px solid var(--bd);transition:.2s;}
+.atab-btn:last-child{border-right:none;}
+.atab-btn.on{background:var(--p);color:#fff;}
+.atab-panel{display:none;border:1.5px solid var(--bd);border-top:none;border-radius:0 0 10px 10px;padding:14px;margin-bottom:14px;background:#fff;}
+.atab-panel.on{display:block;}
+.consult-badge{background:#e65100;color:#fff;font-size:10px;font-weight:800;padding:2px 6px;border-radius:4px;}
+
 .si-drug{font-size:13px;font-weight:800;color:var(--pd);margin-bottom:4px;}
 .si-detail{font-size:12px;color:var(--tx);line-height:1.7;}
 .si-badge{position:absolute;top:8px;right:10px;font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px;}
@@ -302,6 +310,219 @@ if(DB.patients.length===0) loadDemoData();
 saveDB();
 const _now=new Date();const _wd=_now.toLocaleDateString('th-TH',{weekday:'short'});const _dd=String(_now.getDate()).padStart(2,'0');const _mm=String(_now.getMonth()+1).padStart(2,'0');const _yy=_now.getFullYear()+543;document.getElementById('tb-date').textContent=`${_wd} ${_dd}/${_mm}/${_yy}`;
 
+// ---- PATIENT HISTORY ----
+function vPatientHistory(){
+  setContent(`
+  <div class="card">
+    <div class="ch"><span class="ct">📂 ประวัติผู้ป่วยรายคน</span></div>
+    <div style="display:flex;gap:8px;margin-bottom:14px;">
+      <input id="pth-search" placeholder="🔍 ค้นหา HN หรือชื่อ-สกุล..." oninput="searchPtHistory()" style="flex:1;padding:9px 12px;border:1.5px solid var(--bd);border-radius:7px;font-size:13px;">
+    </div>
+    <div id="pth-list"></div>
+  </div>
+  <div id="pth-modal" class="mo" style="display:none;">
+    <div class="mb" style="max-width:680px;max-height:88vh;overflow-y:auto;padding:0;">
+      <div class="mh" style="position:sticky;top:0;z-index:10;">
+        <h3 id="pth-modal-title">📂 ประวัติผู้ป่วย</h3>
+        <button class="mx" onclick="closeModal('pth-modal')">×</button>
+      </div>
+      <div id="pth-modal-body" style="padding:16px;"></div>
+    </div>
+  </div>`);
+  searchPtHistory();
+}
+function searchPtHistory(){
+  const q=(document.getElementById('pth-search')?.value||'').toLowerCase();
+  const ptMap={};
+  DB.visits.forEach(v=>{
+    if(!ptMap[v.hn])ptMap[v.hn]={hn:v.hn,name:v.name,dx:v.dx||getPatDx(v.hn),visits:[]};
+    ptMap[v.hn].visits.push(v);
+  });
+  DB.patients.forEach(p=>{if(!ptMap[p.hn])ptMap[p.hn]={hn:p.hn,name:p.name,dx:p.dx,visits:[]};});
+  const pts=Object.values(ptMap).filter(p=>!q||(p.hn+' '+p.name).toLowerCase().includes(q));
+  pts.sort((a,b)=>{
+    const la=a.visits.sort((x,y)=>new Date(y.date)-new Date(x.date))[0]?.date||'';
+    const lb=b.visits.sort((x,y)=>new Date(y.date)-new Date(x.date))[0]?.date||'';
+    return lb.localeCompare(la);
+  });
+  const el=document.getElementById('pth-list');if(!el)return;
+  el.innerHTML=pts.length?pts.map(p=>{
+    const sorted=p.visits.sort((a,b)=>new Date(b.date)-new Date(a.date));
+    const lastV=sorted[0];
+    const lastScore=(()=>{const dx=normalizeDx(p.dx);if(!lastV)return'–';if(dx==='COPD')return lastV.catScore?`CAT ${lastV.catScore}`:lastV.actScore?`ACT ${lastV.actScore}`:'–';return lastV.actScore?`ACT ${lastV.actScore}`:'–';})();
+    return`<div class="qi" onclick="showPtHistory('${p.hn}')">
+      <div class="qih"><span><strong>${p.hn}</strong> – ${p.name}</span>${dxPill(p.dx||'Asthma')}</div>
+      <div style="font-size:12px;color:var(--tm);">${p.visits.length} visits · ล่าสุด: ${lastV?fmt(lastV.date):'–'} · ${lastScore}</div>
+    </div>`;}).join(''):'<div style="color:var(--tm);padding:16px;text-align:center;">ไม่พบข้อมูล</div>';
+}
+function showPtHistory(hn){
+  const visits=DB.visits.filter(v=>v.hn===hn).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const pt=DB.patients.find(p=>p.hn===hn)||{hn,name:visits[0]?.name||'–',dx:visits[0]?.dx||'Asthma'};
+  const modal=document.getElementById('pth-modal');
+  const titleEl=document.getElementById('pth-modal-title');
+  const bodyEl=document.getElementById('pth-modal-body');
+  if(!modal||!bodyEl)return;
+  titleEl.textContent=`📂 ${pt.name} (HN: ${hn})`;
+  const visitCards=visits.map((v,vidx)=>{
+    const dx=normalizeDx(v.dx||getPatDx(v.hn));
+    const isA=dx==='Asthma'||dx==='ACO';
+    const isC=dx==='COPD'||dx==='ACO';
+    const actPill=isA&&v.actScore!=null?`<span class="pill ${v.actScore>=20?'pg':v.actScore>=15?'py':'pr'}">ACT ${v.actScore}/25</span>`:'';
+    const catPill=isC&&v.catScore!=null?`<span class="pill ${v.catScore<=10?'pg':v.catScore<=20?'py':'pr'}">CAT ${v.catScore}/40</span>`:'';
+    const mmrcPill=isC&&v.mmrc!=null?`<span class="pill py" style="font-size:11px;">mMRC ${v.mmrc}</span>`:'';
+    const adhPill=v.adherenceScore!=null?`<span class="pill ${v.adherenceScore===0?'pg':v.adherenceScore<=2?'py':'pr'}" style="font-size:11px;">Adh ${v.adherenceScore}/4</span>`:'';
+    const stPill=v.status==='done'?'<span class="pill pg">✅ เสร็จสิ้น</span>':v.status==='pending_pharm'?'<span class="pill pb">💊 รอเภสัช</span>':v.status==='pending_doctor'?'<span class="pill py">🩺 รอแพทย์</span>':'<span class="pill pr">📋 รอยืนยัน</span>';
+    const consultBadge=v.consultPharm?'<span class="consult-badge">CONSULT</span>':'';
+    const ta=v.techAssessment;
+    const techHtml=ta?`<div style="background:#e8f5e9;border-radius:7px;padding:8px 12px;margin-top:6px;font-size:12px;"><b>💨 เทคนิคพ่นยา (${(ta.type||'mdi').toUpperCase()}):</b> <span style="font-weight:700;color:${ta.score>=6?'#2e7d32':ta.score>=4?'#e65100':'#c62828'};">${ta.score}/7</span>${ta.note?`<br><span style="color:#555;">📝 ${ta.note}</span>`:''}</div>`:'';
+    const disp=DB.dispensing.filter(d=>d.hn===hn).sort((a,b)=>new Date(b.date)-new Date(a.date)).find(d=>Math.abs(new Date(d.date)-new Date(v.date))<86400000*3);
+    const dispHtml=disp?`<div style="background:#e8f2fc;border-radius:7px;padding:8px 12px;margin-top:6px;font-size:12px;"><b>💊 จ่ายยา (${fmtShort(disp.date)}):</b> ${(disp.drugs||[]).map(d=>`${d.drug} ${d.canisters?.filter(c=>!c.isOld).length||0} กระบอก`).join(', ')||'–'}</div>`:'';
+    const retHtml=v.returnedInhalers?.length?`<div style="font-size:12px;color:#444;margin-top:5px;">🔄 <b>ยาคืน:</b> ${v.returnedInhalers.map(r=>`${r.drugName} ${r.qty} หลอด`).join(', ')}</div>`:'';
+    const nurseNote=v.nurseNotes?`<div style="font-size:12px;color:#555;margin-top:5px;">👩‍⚕️ <b>พยาบาล:</b> ${v.nurseNotes}</div>`:'';
+    const drNote=v.doctorNote?`<div style="font-size:12px;color:var(--pd);margin-top:5px;">🩺 <b>Note แพทย์:</b> ${v.doctorNote}</div>`:'';
+    const drPlan=v.doctorPlan?`<div style="font-size:12px;color:var(--pd);margin-top:5px;">📋 <b>Plan:</b> ${v.doctorPlan}</div>`:'';
+    const ptNote=v.notes?`<div style="font-size:12px;color:#666;margin-top:5px;">💬 <b>ผู้ป่วย:</b> ${v.notes}</div>`:'';
+    return`<div style="border:1.5px solid ${vidx===0?'var(--p)':'var(--bd)'};border-radius:10px;overflow:hidden;margin-bottom:12px;">
+      <div style="background:${vidx===0?'linear-gradient(135deg,var(--pd),var(--p))':'#f0f4ff'};color:${vidx===0?'#fff':'var(--pd)'};padding:10px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;">
+        <span style="font-weight:800;font-size:13px;">📅 ${fmt(v.date)}${vidx===0?' <span style="font-size:10px;opacity:.8;">(ล่าสุด)</span>':''}</span>
+        <div style="display:flex;gap:4px;flex-wrap:wrap;">${stPill}${consultBadge}</div>
+      </div>
+      <div style="padding:10px 14px;">
+        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px;">${actPill}${catPill}${mmrcPill}${adhPill}${dxPill(v.dx||getPatDx(hn))}</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:4px 16px;font-size:12px;margin-bottom:4px;">
+          <div>💨 Reliever: <b>${v.rescue??'–'}/สัปดาห์</b></div>
+          <div>🏠 ยาเหลือ: <b>${v.rescueLeft==='yes'?'✅ มี':v.rescueLeft==='no'?'❌ หมด':v.rescueLeft==='almost'?'⚠️ เกือบหมด':'–'}</b></div>
+          ${v.erCount?`<div>🚑 ER: <b>${v.erCount} ครั้ง</b></div>`:''}
+          ${v.admitCount?`<div>🏥 Admit: <b>${v.admitCount} ครั้ง</b></div>`:''}
+        </div>
+        ${nurseNote}${drNote}${drPlan}${ptNote}${retHtml}${techHtml}${dispHtml}
+      </div>
+    </div>`;
+  }).join('');
+  bodyEl.innerHTML=`
+    <div style="background:linear-gradient(135deg,var(--pd),var(--p));color:#fff;padding:12px 16px;border-radius:8px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+      <div><div style="font-size:16px;font-weight:800;">${pt.name}</div><div style="font-size:12px;opacity:.85;">HN: ${hn} · ${visits.length} visits · ${dxPill(pt.dx||getPatDx(hn))}</div></div>
+    </div>
+    ${visits.length?visitCards:'<div style="color:var(--tm);text-align:center;padding:30px;">ยังไม่มีประวัติ</div>'}`;
+  modal.style.display='flex';
+}
+
+// ---- IN-APP GUIDE ----
+function vGuide(){
+  setContent(`<div style="max-width:800px;margin:0 auto;">
+  <div style="background:linear-gradient(135deg,#0d47a1,#42a5f5);color:#fff;border-radius:10px;padding:24px;text-align:center;margin-bottom:20px;">
+    <div style="font-size:2.5rem;">🫁</div>
+    <h2 style="font-size:1.3rem;font-weight:800;margin:8px 0 4px;">Asthma / COPD Clinic System</h2>
+    <p style="font-size:.9rem;opacity:.9;">คู่มือการใช้งานสำหรับทีมสุขภาพ</p>
+  </div>
+
+  <!-- Roles -->
+  <div class="card" style="margin-bottom:14px;">
+    <div class="ch"><span class="ct">👥 บทบาทผู้ใช้งาน & รหัสผ่าน</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:8px;">
+      ${[{r:'ผู้ป่วย/อสม.',ic:'🏠',p:'ไม่ต้องล็อกอิน',c:'#546e7a'},
+         {r:'พยาบาล',ic:'🩺',p:'nurse1234',c:'#00897b'},
+         {r:'แพทย์',ic:'👨‍⚕️',p:'doctor1234',c:'#1565c0'},
+         {r:'เภสัชกร',ic:'💊',p:'pharm1234',c:'#6a1b9a'},
+         {r:'Admin',ic:'⚙️',p:'admin1234',c:'#e65100'}].map(x=>`
+        <div style="border-top:3px solid ${x.c};border-radius:8px;padding:12px;text-align:center;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.07);">
+          <div style="font-size:1.8rem;">${x.ic}</div>
+          <div style="font-weight:800;font-size:.9rem;margin:4px 0;">${x.r}</div>
+          <div style="background:#f0f4ff;border-radius:4px;padding:2px 6px;font-size:.75rem;font-family:monospace;color:var(--p);">${x.p}</div>
+        </div>`).join('')}
+    </div>
+    <div style="background:#e8f2fc;border-radius:6px;padding:8px 12px;margin-top:10px;font-size:12px;">💡 เปลี่ยนรหัสผ่านได้ใน Admin → ตั้งค่า</div>
+  </div>
+
+  <!-- Workflow -->
+  <div class="card" style="margin-bottom:14px;">
+    <div class="ch"><span class="ct">🔄 Workflow การทำงาน</span></div>
+    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:10px 0;">
+      ${[['📋 ผู้ป่วยประเมิน','#546e7a'],['✅ พยาบาลยืนยัน','#00897b'],['🩺 แพทย์วินิจฉัย','#1565c0'],['💊 เภสัชจ่ายยา','#6a1b9a'],['✅ เสร็จสิ้น','#2e7d32']].map((x,i,a)=>`
+        <span style="background:${x[1]};color:#fff;border-radius:20px;padding:5px 12px;font-size:.8rem;font-weight:700;">${x[0]}</span>
+        ${i<a.length-1?'<span style="color:#999;">→</span>':''}`).join('')}
+    </div>
+    <div style="font-size:12.5px;color:var(--tm);margin-top:4px;">💡 พยาบาลสามารถ <b>Consult เภสัช</b> โดยตรง (สีส้ม) สำหรับผู้ป่วยที่ควบคุมอาการไม่ดี</div>
+  </div>
+
+  <!-- Disease & Scores -->
+  <div class="card" style="margin-bottom:14px;">
+    <div class="ch"><span class="ct">🔬 โรคที่รองรับ & แบบประเมิน</span></div>
+    <div style="overflow-x:auto;margin-top:8px;">
+      <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+        <thead><tr style="background:#f0f4ff;"><th style="padding:7px 10px;text-align:left;">โรค</th><th style="padding:7px 10px;">แบบประเมิน</th><th style="padding:7px 10px;">เกณฑ์</th></tr></thead>
+        <tbody>
+          <tr style="border-bottom:1px solid var(--bd);"><td style="padding:7px 10px;">🌬️ <b>Asthma</b></td><td style="padding:7px 10px;">ACT (5 ข้อ, 5–25)</td><td style="padding:7px 10px;">≥20 = Controlled · &lt;20 = Not Controlled</td></tr>
+          <tr style="border-bottom:1px solid var(--bd);"><td style="padding:7px 10px;">🫁 <b>COPD</b></td><td style="padding:7px 10px;">CAT (8 ข้อ, 0–40) + mMRC</td><td style="padding:7px 10px;">CAT ≤10 = Low · &gt;10 = High Impact</td></tr>
+          <tr><td style="padding:7px 10px;">🔵 <b>ACO</b></td><td style="padding:7px 10px;">ACT + CAT + mMRC</td><td style="padding:7px 10px;">ประเมินครบทั้ง 2 โรค</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- GINA Steps -->
+  <div class="card" style="margin-bottom:14px;">
+    <div class="ch"><span class="ct">🌬️ GINA Steps (Asthma 2023)</span></div>
+    <div style="overflow-x:auto;margin-top:8px;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr style="background:#f0f4ff;"><th style="padding:6px 8px;">Step</th><th style="padding:6px 8px;text-align:left;">ยา Controller</th><th style="padding:6px 8px;text-align:left;">หมายเหตุ</th></tr></thead>
+        <tbody>
+          ${GINA_RECS.map(r=>`<tr style="border-bottom:1px solid var(--bd);"><td style="padding:6px 8px;text-align:center;font-weight:800;color:var(--p);">Step ${r.step}</td><td style="padding:6px 8px;white-space:pre-line;">${r.drugs}</td><td style="padding:6px 8px;color:var(--tm);">${r.note}</td></tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- GOLD Groups -->
+  <div class="card" style="margin-bottom:14px;">
+    <div class="ch"><span class="ct">🫁 GOLD Groups (COPD 2024)</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:8px;">
+      ${Object.entries(GOLD_RECS).map(([k,v])=>`
+        <div style="background:#fff8f0;border:1.5px solid #ffcc80;border-radius:8px;padding:12px;">
+          <div style="font-weight:800;color:#e65100;margin-bottom:4px;">🏷️ GOLD ${v.label}</div>
+          <div style="font-size:12px;font-weight:700;margin-bottom:4px;">${v.treatment}</div>
+          <div style="font-size:11.5px;color:#333;white-space:pre-line;line-height:1.6;">${v.drugs}</div>
+          <div style="font-size:11px;color:#666;margin-top:4px;">📌 ${v.note}</div>
+        </div>`).join('')}
+    </div>
+  </div>
+
+  <!-- Sticker -->
+  <div class="card" style="margin-bottom:14px;">
+    <div class="ch"><span class="ct">🏷️ สติ๊กเกอร์ยาพ่น (5×7 cm)</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px;font-size:12.5px;">
+      <div style="background:#fff5f5;border-radius:8px;padding:10px;border:1px solid #ef9a9a;">
+        <div style="font-weight:800;color:#c62828;margin-bottom:6px;">💨 Reliever</div>
+        <div>• ตาราง 20 ช่อง (1 ช่อง = 2 puffs)</div>
+        <div>• QR Code สำหรับบันทึก Emergency Log</div>
+        <div>• ชื่อผู้ป่วย + HN</div>
+      </div>
+      <div style="background:#e8f2fc;border-radius:8px;padding:10px;border:1px solid #90caf9;">
+        <div style="font-weight:800;color:var(--pd);margin-bottom:6px;">💊 Controller</div>
+        <div>• วันเปิดใช้ – วันยาหมด (อัตโนมัติ)</div>
+        <div>• วิธีใช้ + วันนัด</div>
+        <div>• QR Code สำหรับดึงข้อมูลผู้ป่วย</div>
+      </div>
+    </div>
+    <div style="background:#fff3e0;border-radius:6px;padding:8px 12px;margin-top:8px;font-size:12px;">📌 ตั้ง Paper Size = <b>70×50mm</b> (Landscape) ในหน้าต่างพิมพ์</div>
+  </div>
+
+  <!-- Tech info -->
+  <div class="card" style="margin-bottom:14px;">
+    <div class="ch"><span class="ct">🔧 ข้อมูลทางเทคนิค</span></div>
+    <div style="font-size:12.5px;line-height:2.2;margin-top:4px;">
+      📁 <b>รูปแบบ:</b> Single HTML file — ไม่ต้องติดตั้ง เปิดด้วย Browser ได้เลย<br>
+      💾 <b>จัดเก็บข้อมูล:</b> Browser LocalStorage (ในเครื่อง ไม่ส่งอินเทอร์เน็ต)<br>
+      📶 <b>Offline:</b> ทำงานได้โดยไม่มี Internet (ยกเว้น QR Code image)<br>
+      📤 <b>Backup:</b> Admin → ตั้งค่า → Export JSON สำรองข้อมูล<br>
+      📋 <b>Import:</b> รองรับ Excel (.xlsx) สำหรับข้อมูลผู้ป่วยและยา
+    </div>
+    <div style="background:#ffebee;border-radius:6px;padding:8px 12px;margin-top:8px;font-size:12px;color:#c62828;">
+      ⚠️ <b>ข้อควรระวัง:</b> ข้อมูลอยู่ในเครื่องเท่านั้น — ควร Export สำรองก่อนล้างข้อมูล Browser ทุกครั้ง
+    </div>
+  </div>
+  </div>`);
+}
 // ==================== HASH ROUTING (QR rescue) ====================
 function handleHash(){
   const h=location.hash;
@@ -354,26 +575,33 @@ function startApp(role){
 const NAVS = {
   public:[
     {id:'assess',label:'📋 แบบประเมิน',fn:'vAssess'},
+    {id:'guide',label:'📖 คู่มือ',fn:'vGuide'},
   ],
   nurse:[
     {id:'nqueue',label:'📥 คิวผู้ป่วย',fn:'vNurseQueue'},
     {id:'nverify',label:'✅ ยืนยันข้อมูล',fn:'vNurseVerify'},
     {id:'nassess',label:'📋 ประเมินผู้ป่วย',fn:'vAssessNurse'},
-    {id:'rescue',label:'🚨 ยาพ่นฉุกเฉิน',fn:'vRescueHistory'},
+    {id:'rescue',label:'💨 Reliever',fn:'vRescueHistory'},
+    {id:'pthistory',label:'📂 ประวัติ',fn:'vPatientHistory'},
+    {id:'guide',label:'📖 คู่มือ',fn:'vGuide'},
     {id:'dashboard',label:'📊 Dashboard',fn:'vDash'},
   ],
   doctor:[
     {id:'drsummary',label:'📄 ใบสรุปประเมิน',fn:'vDoctorSummary'},
     {id:'drpatients',label:'👥 ผู้ป่วย',fn:'vPatients'},
-    {id:'rescue',label:'🚨 ยาพ่นฉุกเฉิน',fn:'vRescueHistory'},
+    {id:'rescue',label:'💨 Reliever',fn:'vRescueHistory'},
+    {id:'pthistory',label:'📂 ประวัติ',fn:'vPatientHistory'},
+    {id:'guide',label:'📖 คู่มือ',fn:'vGuide'},
     {id:'dashboard',label:'📊 Dashboard',fn:'vDash'},
   ],
   pharmacist:[
     {id:'phqueue',label:'📥 คิวจ่ายยา',fn:'vPhQueue'},
     {id:'phdisp',label:'💊 จ่ายยา/คำนวณ',fn:'vPhDisp'},
     {id:'phhistory',label:'📋 ประวัติการจ่าย',fn:'vPhHistory'},
-    {id:'rescue',label:'🚨 ยาพ่นฉุกเฉิน',fn:'vRescueHistory'},
+    {id:'rescue',label:'💨 Reliever',fn:'vRescueHistory'},
     {id:'import',label:'📂 นำเข้า Excel',fn:'vImport'},
+    {id:'pthistory',label:'📂 ประวัติ',fn:'vPatientHistory'},
+    {id:'guide',label:'📖 คู่มือ',fn:'vGuide'},
   ],
   admin:[
     {id:'dashboard',label:'📊 Dashboard',fn:'vDash'},
@@ -386,8 +614,10 @@ const NAVS = {
     {id:'phhistory',label:'📦 ประวัติจ่าย',fn:'vPhHistory'},
     {id:'drsummary',label:'🩺 ใบสรุปแพทย์',fn:'vDoctorSummary'},
     {id:'drugdb',label:'🧪 ฐานข้อมูลยา',fn:'vDrugDB'},
-    {id:'rescue',label:'🚨 ยาพ่นฉุกเฉิน',fn:'vRescueHistory'},
+    {id:'rescue',label:'💨 Reliever',fn:'vRescueHistory'},
     {id:'import',label:'📂 นำเข้า Excel',fn:'vImport'},
+    {id:'pthistory',label:'📂 ประวัติ',fn:'vPatientHistory'},
+    {id:'guide',label:'📖 คู่มือ',fn:'vGuide'},
     {id:'settings',label:'⚙️ ตั้งค่า',fn:'vSettings'},
   ]
 };
@@ -427,80 +657,103 @@ function vAssessNurse(){
 function vAssess(){
   setContent(`
   <div style="max-width:560px;margin:0 auto;">
-    <div style="background:linear-gradient(135deg,var(--pd),var(--s));color:#fff;border-radius:var(--r);padding:18px;text-align:center;margin-bottom:18px;">
-      <div style="font-size:36px;margin-bottom:6px;">📋</div>
-      <h2 style="font-size:18px;font-weight:800;">แบบประเมินตนเองก่อนพบพยาบาล</h2>
-      <p style="font-size:12px;opacity:.85;margin-top:4px;">กรอกข้อมูลอาการใน 4 สัปดาห์ที่ผ่านมา</p>
+    <div style="background:linear-gradient(135deg,var(--pd),var(--s));color:#fff;border-radius:var(--r);padding:16px;text-align:center;margin-bottom:14px;">
+      <div style="font-size:32px;margin-bottom:4px;">📋</div>
+      <h2 style="font-size:17px;font-weight:800;">แบบประเมินตนเองก่อนพบพยาบาล</h2>
+      <p style="font-size:11px;opacity:.85;margin-top:3px;">กรอกข้อมูลอาการใน 4 สัปดาห์ที่ผ่านมา</p>
     </div>
-    <div class="card">
-      <div class="ch"><span class="ct">👤 ข้อมูลผู้ป่วย</span></div>
-      <div class="fgrid">
-        <div class="fg"><label>HN *</label><input id="a-hn" placeholder="รหัสผู้ป่วย" oninput="aFillName()"></div>
-        <div class="fg"><label>ชื่อ-สกุล *</label><input id="a-name" placeholder="ชื่อ นามสกุล"></div>
-        <div class="fg"><label>วันที่</label><input type="date" id="a-date" value="${today()}" onchange="syncThaiLabel('a-date')"><div id="a-date-th" style="font-size:12px;color:var(--p);margin-top:3px;font-weight:600;"></div></div>
-        <div class="fg"><label>บันทึกโดย</label>
-          <select id="a-by">
-            <option value="patient">ผู้ป่วย (กรอกเอง)</option>
-            <option value="nurse">พยาบาล (ประเมินแทน)</option>
-            <option value="caregiver">ผู้ดูแล / Care Giver</option>
-            <option value="อสม">อสม.</option>
-          </select>
+    <div class="atab-nav">
+      <button class="atab-btn on" id="atb1" onclick="assessTab(1)">📋 อาการ</button>
+      <button class="atab-btn" id="atb2" onclick="assessTab(2)">📊 แบบประเมิน</button>
+      <button class="atab-btn" id="atb3" onclick="assessTab(3)">💊 การใช้ยา</button>
+    </div>
+
+    <!-- TAB 1: อาการ -->
+    <div class="atab-panel on" id="assess-t1">
+      <div class="card" style="margin-bottom:12px;">
+        <div class="ch"><span class="ct">👤 ข้อมูลผู้ป่วย</span></div>
+        <div class="fgrid">
+          <div class="fg"><label>HN *</label><input id="a-hn" placeholder="รหัสผู้ป่วย" oninput="aFillName()"></div>
+          <div class="fg"><label>ชื่อ-สกุล *</label><input id="a-name" placeholder="ชื่อ นามสกุล"></div>
+          <div class="fg"><label>วันที่</label><input type="date" id="a-date" value="${today()}" onchange="syncThaiLabel('a-date')"><div id="a-date-th" style="font-size:12px;color:var(--p);margin-top:3px;font-weight:600;"></div></div>
+          <div class="fg"><label>บันทึกโดย</label>
+            <select id="a-by">
+              <option value="patient">ผู้ป่วย (กรอกเอง)</option>
+              <option value="nurse">พยาบาล (ประเมินแทน)</option>
+              <option value="caregiver">ผู้ดูแล / Care Giver</option>
+              <option value="อสม">อสม.</option>
+            </select>
+          </div>
+          <div class="fg"><label>การวินิจฉัย</label>
+            <select id="a-dx" onchange="onDxChange()">
+              <option value="Asthma">🌬️ Asthma</option>
+              <option value="COPD">🫁 COPD</option>
+              <option value="ACO">🔵 COPD + Asthma (ACO)</option>
+            </select>
+          </div>
         </div>
-        <div class="fg"><label>การวินิจฉัย</label>
-          <select id="a-dx" onchange="onDxChange()">
-            <option value="Asthma">🌬️ Asthma</option>
-            <option value="COPD">🫁 COPD</option>
-            <option value="ACO">🔵 COPD + Asthma (ACO)</option>
-          </select>
+        <div class="fg" id="a-caregiver-wrap" style="display:none"><label>ชื่อผู้บันทึก (อสม./ผู้ดูแล)</label><input id="a-caregiver" placeholder="ชื่อผู้บันทึก"></div>
+        <div class="fg" id="a-nurse-row" style="display:none"><label>ชื่อพยาบาลผู้ประเมิน</label><input id="a-nurse-name" placeholder="ชื่อพยาบาล (ไม่จำเป็นต้องกรอก)"></div>
+      </div>
+      <div class="card" style="margin-bottom:12px;">
+        <div class="ch"><span class="ct">😮‍💨 อาการหอบ (4 สัปดาห์ที่ผ่านมา)</span></div>
+        <div class="fgrid">
+          <div class="fg"><label>หอบกลางวัน (ครั้ง/สัปดาห์)</label><input type="number" id="a-day" min="0" placeholder="0" oninput="checkAdhShow()"></div>
+          <div class="fg"><label>หอบกลางคืน / ตื่นนอน (ครั้ง/สัปดาห์)</label><input type="number" id="a-night" min="0" placeholder="0" oninput="checkAdhShow()"></div>
+          <div class="fg"><label>พ่นยา Reliever (puffs/สัปดาห์)</label><input type="number" id="a-rescue" min="0" placeholder="0"></div>
+          <div class="fg"><label>จำกัดกิจกรรมเพราะหอบ (ครั้ง/สัปดาห์)</label><input type="number" id="a-act" min="0" placeholder="0"></div>
         </div>
       </div>
-      <div class="fg" id="a-caregiver-wrap" style="display:none"><label>ชื่อผู้บันทึก (อสม./ผู้ดูแล)</label><input id="a-caregiver" placeholder="ชื่อผู้บันทึก"></div>
-      <div class="fg" id="a-nurse-row" style="display:none"><label>ชื่อพยาบาลผู้ประเมิน</label><input id="a-nurse-name" placeholder="ชื่อพยาบาล (ไม่จำเป็นต้องกรอก)"></div>
-    </div>
-    <div class="card">
-      <div class="ch"><span class="ct">😮‍💨 อาการหอบ (4 สัปดาห์ที่ผ่านมา)</span></div>
-      <div class="fgrid">
-        <div class="fg"><label>หอบกลางวัน (ครั้ง/สัปดาห์)</label><input type="number" id="a-day" min="0" placeholder="0" oninput="checkAdhShow()"></div>
-        <div class="fg"><label>หอบกลางคืน / ตื่นนอน (ครั้ง/สัปดาห์)</label><input type="number" id="a-night" min="0" placeholder="0" oninput="checkAdhShow()"></div>
-        <div class="fg"><label>พ่นยาฉุกเฉิน (กด/puffs ต่อสัปดาห์)</label><input type="number" id="a-rescue" min="0" placeholder="0"></div>
-        <div class="fg"><label>จำกัดกิจกรรมเพราะหอบ (ครั้ง/สัปดาห์)</label><input type="number" id="a-act" min="0" placeholder="0"></div>
+      <div class="card" style="margin-bottom:12px;">
+        <div class="ch"><span class="ct">🏥 ประวัติมาโรงพยาบาล</span></div>
+        <div class="fgrid">
+          <div class="fg"><label>ER ทั้งหมด (ครั้ง)</label><input type="number" id="a-er" min="0" placeholder="0"></div>
+          <div class="fg"><label>OPD/Clinic ทั้งหมด (ครั้ง)</label><input type="number" id="a-opd" min="0" placeholder="0"></div>
+          <div class="fg"><label>Admit ในปีนี้ (ครั้ง)</label><input type="number" id="a-admit" min="0" placeholder="0"></div>
+        </div>
+      </div>
+      <div style="text-align:right;padding-bottom:6px;">
+        <button class="btn bs" onclick="assessTab(2)">ถัดไป → แบบประเมิน</button>
       </div>
     </div>
-    <div class="card">
-      <div class="ch"><span class="ct">🏥 ประวัติมาโรงพยาบาล</span></div>
-      <div class="fgrid">
-        <div class="fg"><label>ER ทั้งหมด (ครั้ง)</label><input type="number" id="a-er" min="0" placeholder="0"></div>
-        <div class="fg"><label>OPD/Clinic ทั้งหมด (ครั้ง)</label><input type="number" id="a-opd" min="0" placeholder="0"></div>
-        <div class="fg"><label>Admit ในปีนี้ (ครั้ง)</label><input type="number" id="a-admit" min="0" placeholder="0"></div>
+
+    <!-- TAB 2: แบบประเมิน -->
+    <div class="atab-panel" id="assess-t2">
+      <div class="card" id="act-card" style="margin-bottom:12px;">
+        <div class="ch"><span class="ct">📊 Asthma Control Test (ACT)</span><span class="pill pb">5 ข้อ · 5–25 คะแนน</span></div>
+        <div id="act-qs"></div><div id="act-res"></div>
+      </div>
+      <div class="card" id="cat-card" style="display:none;margin-bottom:12px;">
+        <div class="ch"><span class="ct">🫁 COPD Assessment Test (CAT)</span><span class="pill po">8 ข้อ · 0–40 คะแนน</span></div>
+        <div id="cat-qs"></div><div id="cat-res"></div>
+      </div>
+      <div class="card" id="mmrc-card" style="display:none;margin-bottom:12px;">
+        <div class="ch"><span class="ct">🌬️ mMRC Dyspnea Scale</span><span class="pill po">ระดับ 0–4</span></div>
+        <div id="mmrc-qs"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding-bottom:6px;">
+        <button class="btn bo" onclick="assessTab(1)">← ย้อนกลับ</button>
+        <button class="btn bs" onclick="assessTab(3)">ถัดไป → การใช้ยา</button>
       </div>
     </div>
-    <div class="card" id="act-card">
-      <div class="ch"><span class="ct">📊 Asthma Control Test (ACT)</span><span class="pill pb">5 ข้อ · 5–25 คะแนน</span></div>
-      <div id="act-qs"></div>
-      <div id="act-res"></div>
+
+    <!-- TAB 3: การใช้ยา -->
+    <div class="atab-panel" id="assess-t3">
+      <div class="card" id="adh-card" style="display:none;margin-bottom:12px;">
+        <div class="ch"><span class="ct">💊 ประเมิน Adherence (MMAS-4)</span><span class="pill pr">หอบ ≥2 ครั้ง/สัปดาห์</span></div>
+        <div class="al alw"><span>⚠️</span><span>ตรวจพบอาการหอบบ่อย กรุณาตอบคำถามการใช้ยา</span></div>
+        <div id="adh-qs"></div><div id="adh-res"></div>
+      </div>
+      <div class="card" style="margin-bottom:12px;">
+        <div class="ch"><span class="ct">📝 หมายเหตุ</span></div>
+        <div class="fg"><textarea id="a-notes" placeholder="อาการอื่นๆ หรือสิ่งที่ต้องการแจ้งแพทย์/พยาบาล..."></textarea></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;padding-bottom:6px;">
+        <button class="btn bo" onclick="assessTab(2)">← ย้อนกลับ</button>
+        <button class="btn bs" style="font-size:15px;padding:12px 32px;" onclick="submitAssess()">✅ ส่งข้อมูล</button>
+      </div>
     </div>
-    <div class="card" id="cat-card" style="display:none">
-      <div class="ch"><span class="ct">🫁 COPD Assessment Test (CAT)</span><span class="pill po">8 ข้อ · 0–40 คะแนน</span></div>
-      <div id="cat-qs"></div>
-      <div id="cat-res"></div>
-    </div>
-    <div class="card" id="mmrc-card" style="display:none">
-      <div class="ch"><span class="ct">🌬️ mMRC Dyspnea Scale</span><span class="pill po">ระดับ 0–4</span></div>
-      <div id="mmrc-qs"></div>
-    </div>
-    <div class="card" id="adh-card" style="display:none">
-      <div class="ch"><span class="ct">💊 ประเมิน Adherence (MMAS-4)</span><span class="pill pr">หอบ ≥2 ครั้ง/สัปดาห์</span></div>
-      <div class="al alw"><span>⚠️</span><span>ตรวจพบอาการหอบบ่อย กรุณาตอบคำถามการใช้ยา</span></div>
-      <div id="adh-qs"></div>
-      <div id="adh-res"></div>
-    </div>
-    <div class="card">
-      <div class="ch"><span class="ct">📝 หมายเหตุ</span></div>
-      <div class="fg"><textarea id="a-notes" placeholder="อาการอื่นๆ หรือสิ่งที่ต้องการแจ้งแพทย์/พยาบาล..."></textarea></div>
-    </div>
-    <div style="text-align:center;padding:8px 0 28px;">
-      <button class="btn bs" style="font-size:15px;padding:13px 36px;" onclick="submitAssess()">✅ ส่งข้อมูล</button>
-    </div>
+
     <div id="assess-ok" style="display:none;text-align:center;padding:50px 20px;">
       <div style="font-size:56px;">✅</div>
       <h2 style="color:var(--ok);margin:12px 0 6px;">ส่งข้อมูลเรียบร้อย</h2>
@@ -517,12 +770,21 @@ function vAssess(){
   });
   renderACT();renderAdh();renderCAT();rendermMRC();onDxChange();
 }
+function assessTab(n){
+  [1,2,3].forEach(i=>{
+    const p=document.getElementById('assess-t'+i);
+    const b=document.getElementById('atb'+i);
+    if(p) p.classList.toggle('on',i===n);
+    if(b) b.classList.toggle('on',i===n);
+  });
+  window.scrollTo({top:0,behavior:'smooth'});
+}
 
 const ACT_Q=[
   {q:'อาการหอบขัดขวางการทำงาน/กิจกรรมบ้านบ่อยแค่ไหน?',opts:['ตลอดเวลา','บ่อยมาก','บางครั้ง','นานๆครั้ง','ไม่เลย']},
   {q:'คุณหายใจลำบากบ่อยแค่ไหน?',opts:['มากกว่า 1ครั้ง/วัน','1ครั้ง/วัน','3–6ครั้ง/สัปดาห์','1–2ครั้ง/สัปดาห์','ไม่เลย']},
   {q:'อาการหอบปลุกคุณตื่นกลางดึกบ่อยแค่ไหน?',opts:['4+คืน/สัปดาห์','2–3คืน/สัปดาห์','1ครั้ง/สัปดาห์','1–2ครั้ง','ไม่เลย']},
-  {q:'คุณใช้ยาพ่นฉุกเฉินบ่อยแค่ไหน?',opts:['3+ครั้ง/วัน','1–2ครั้ง/วัน','2–3ครั้ง/สัปดาห์','≤1ครั้ง/สัปดาห์','ไม่เลย']},
+  {q:'คุณใช้ยาพ่น Reliever บ่อยแค่ไหน?',opts:['3+ครั้ง/วัน','1–2ครั้ง/วัน','2–3ครั้ง/สัปดาห์','≤1ครั้ง/สัปดาห์','ไม่เลย']},
   {q:'คุณคิดว่าอาการหอบหืดควบคุมได้ดีแค่ไหน?',opts:['ไม่ได้เลย','ควบคุมได้น้อย','พอสมควร','ได้ดี','ดีมาก']},
 ];
 const MMAS_Q=['คุณเคยลืมพ่นยาควบคุมบ้างไหม?','บางครั้งคุณไม่ได้พ่นยาเนื่องจากเหตุผลอื่นบ้างไหม?','คุณเคยหยุดพ่นยาเองโดยไม่บอกแพทย์บ้างไหม?','เวลาเดินทาง คุณบางครั้งลืมพกยาพ่นบ้างไหม?'];
@@ -716,6 +978,93 @@ function submitAssess(){
   toast('ส่งข้อมูลเรียบร้อย ✅');
 }
 
+
+// ==================== GINA / GOLD CLINICAL DATA ====================
+const GINA_RECS=[
+  {step:1,drugs:'ICS-Formoterol ขนาดต่ำ PRN (preferred)\nหรือ SABA PRN เท่านั้น',note:'ไม่มียา Controller ประจำ หรือ Low-dose ICS อย่างเดียว'},
+  {step:2,drugs:'ICS ขนาดต่ำ daily\n• Budesonide (Pulmicort) 200–400 mcg/วัน\n• Fluticasone (Flixotide) 100–200 mcg/วัน',note:'Reliever: SABA PRN (Salbutamol)'},
+  {step:3,drugs:'ICS/LABA ขนาดต่ำ daily\n• Budesonide/Formoterol (Symbicort) 80/4.5 × 2/วัน\n• Fluticasone/Salmeterol (Seretide) 25/50 × 2/วัน\nหรือ ICS ขนาดกลาง (Budesonide 400–800 mcg/วัน)',note:'Reliever: SABA PRN'},
+  {step:4,drugs:'ICS/LABA ขนาดกลาง-สูง daily\n• Budesonide/Formoterol (Symbicort) 160/4.5 × 2/วัน\n• Fluticasone/Salmeterol (Seretide) 25/125 × 2/วัน\nพิจารณาเพิ่ม LAMA (Tiotropium)',note:'Reliever: SABA PRN'},
+  {step:5,drugs:'High-dose ICS/LABA + LAMA (Tiotropium/Spiriva)\n± Biologic (Anti-IL5, Anti-IgE) ตาม phenotype',note:'⚠️ ควรส่งต่อผู้เชี่ยวชาญ / Pulmonologist'},
+];
+const GOLD_RECS={
+  A:{label:'Group A',treatment:'Bronchodilator ตัวเดียว',drugs:'SABA PRN (Salbutamol)\nหรือ LAMA: Tiotropium (Spiriva) 18 mcg/วัน',note:'ประเมินผลหลัง 4–6 สัปดาห์'},
+  B:{label:'Group B',treatment:'LAMA Monotherapy (preferred)',drugs:'Tiotropium (Spiriva) 18 mcg/วัน\nหรือ LAMA+LABA ถ้ายังมีอาการมาก',note:'เช่น Tiotropium + Formoterol'},
+  E:{label:'Group E',treatment:'LAMA + LABA Dual Bronchodilator',drugs:'LAMA+LABA combination\n± ICS ถ้า eosinophils ≥300 cells/μL หรือมี Asthma features',note:'พิจารณา Triple therapy (ICS/LABA/LAMA) ถ้ายังไม่ดีขึ้น'},
+};
+function clinicalRecHTML(v,lastDisp){
+  const dx=normalizeDx(v.dx||getPatDx(v.hn));
+  const isA=dx==='Asthma'||dx==='ACO';
+  const isC=dx==='COPD'||dx==='ACO';
+  let html='';
+  if(isA){
+    const act=v.actScore;const step=v.ginaStep?parseInt(v.ginaStep):null;
+    let ctrlLvl='ไม่มีข้อมูล',ctrlColor='#888';
+    if(act>=20){ctrlLvl='Well Controlled ✅';ctrlColor='#2e7d32';}
+    else if(act>=15){ctrlLvl='Partially Controlled ⚠️';ctrlColor='#e65100';}
+    else if(act){ctrlLvl='Uncontrolled 🚨';ctrlColor='#c62828';}
+    let recHtml='';
+    if(act&&step){
+      if(act<20||(v.erCount>0)){
+        const ns=Math.min(step+1,5);const nd=GINA_RECS[ns-1];
+        recHtml=`<div style="background:#fff5f5;border:1px solid #ef9a9a;border-radius:7px;padding:10px 12px;margin-top:8px;">
+          <div style="font-weight:800;color:#c62828;margin-bottom:4px;">⬆️ พิจารณา Step Up → GINA Step ${ns}</div>
+          <div style="font-size:12px;line-height:1.7;white-space:pre-line;">${nd.drugs}</div>
+          <div style="font-size:11px;color:#666;margin-top:4px;">📌 ${nd.note}</div></div>`;
+      }else{
+        const ns=act===25&&step>1?step-1:step;
+        if(ns<step){
+          const nd=GINA_RECS[ns-1];
+          recHtml=`<div style="background:#e8f5e9;border:1px solid #a5d6a7;border-radius:7px;padding:10px 12px;margin-top:8px;">
+            <div style="font-weight:800;color:#2e7d32;margin-bottom:4px;">⬇️ สามารถ Step Down → GINA Step ${ns} (ถ้าคุมได้ดี ≥3 เดือน)</div>
+            <div style="font-size:12px;line-height:1.7;white-space:pre-line;">${nd.drugs}</div>
+            <div style="font-size:11px;color:#666;margin-top:4px;">📌 ${nd.note}</div></div>`;
+        }else{
+          recHtml=`<div style="background:#e8f5e9;border:1px solid #a5d6a7;border-radius:7px;padding:8px 12px;margin-top:8px;font-size:12px;">✅ <b>Maintain GINA Step ${step}</b> — อาการได้รับการควบคุมดี คงยาเดิม</div>`;
+        }
+      }
+    }else if(act&&!step){
+      const sg=act>=20?2:act>=15?3:4;const nd=GINA_RECS[sg-1];
+      recHtml=`<div style="background:#e8f2fc;border:1px solid #90caf9;border-radius:7px;padding:10px 12px;margin-top:8px;">
+        <div style="font-weight:800;color:var(--pd);margin-bottom:4px;">💡 แนะนำ GINA Step ${sg} (ประมาณจาก ACT Score)</div>
+        <div style="font-size:12px;line-height:1.7;white-space:pre-line;">${nd.drugs}</div>
+        <div style="font-size:11px;color:#666;margin-top:4px;">📌 ${nd.note}</div></div>`;
+    }
+    html+=`<div style="background:#f0f4ff;border-radius:8px;padding:12px 14px;margin-bottom:8px;">
+      <div style="font-weight:800;color:var(--pd);margin-bottom:8px;font-size:13px;">🌬️ แนวทางคลินิก – Asthma${dx==='ACO'?' (ACO)':''} (GINA 2023)</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;margin-bottom:4px;">
+        <span>📊 <b>ระดับการควบคุม:</b> <span style="color:${ctrlColor};font-weight:700;">${ctrlLvl}</span></span>
+        ${step?`<span>🩺 <b>GINA Step ปัจจุบัน:</b> Step ${step}</span>`:'<span style="color:#888;">🩺 ยังไม่ระบุ GINA Step</span>'}
+      </div>${recHtml}</div>`;
+  }
+  if(isC){
+    const cat=v.catScore;const mmrc=v.mmrc;const admits=v.admitCount||0;const er=v.erCount||0;
+    let gg=null;
+    if(cat!=null){gg=(admits>0||er>=2)?'E':cat>=10?'B':'A';}
+    const gr=gg?GOLD_RECS[gg]:null;
+    let catLvl='',catColor='#888';
+    if(cat!=null){
+      if(cat<=10){catLvl='Low Impact';catColor='#2e7d32';}
+      else if(cat<=20){catLvl='Medium Impact';catColor='#e65100';}
+      else if(cat<=30){catLvl='High Impact';catColor='#c62828';}
+      else{catLvl='Very High Impact';catColor='#b71c1c';}
+    }
+    html+=`<div style="background:#fff8f0;border-radius:8px;padding:12px 14px;margin-bottom:8px;">
+      <div style="font-weight:800;color:#bf360c;margin-bottom:8px;font-size:13px;">🫁 แนวทางคลินิก – COPD${dx==='ACO'?' (ACO)':''} (GOLD 2024)</div>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;margin-bottom:6px;">
+        ${cat!=null?`<span>📊 <b>CAT:</b> <span style="color:${catColor};font-weight:700;">${cat} – ${catLvl}</span></span>`:''}
+        ${mmrc!=null?`<span>🌬️ <b>mMRC:</b> Grade ${mmrc}</span>`:''}
+        ${gg?`<span>🏷️ <b>GOLD ${GOLD_RECS[gg].label}</b></span>`:''}
+        ${admits>0?`<span>🏥 <b>Admit:</b> ${admits} ครั้ง</span>`:''}
+      </div>
+      ${gr?`<div style="background:#fff3e0;border:1px solid #ffcc80;border-radius:7px;padding:10px 12px;">
+        <div style="font-weight:800;color:#e65100;margin-bottom:4px;">💊 แนะนำ: ${gr.treatment}</div>
+        <div style="font-size:12px;line-height:1.7;white-space:pre-line;">${gr.drugs}</div>
+        <div style="font-size:11px;color:#666;margin-top:4px;">📌 ${gr.note}</div></div>`:'<div style="font-size:12px;color:var(--tm);">กรุณาระบุ CAT Score เพื่อดูแนวทาง GOLD</div>'}
+    </div>`;
+  }
+  return html?`<div style="margin:0 16px 12px;">${html}</div>`:'';
+}
 // ---- DX HELPERS ----
 function getPatDx(hn){const p=DB.patients.find(x=>x.hn===hn);return p?.dx||'Asthma';}
 function normalizeDx(dx){
@@ -832,14 +1181,14 @@ function openNurseVerify(vid){
     <div class="fgrid">
       <div class="fg"><label>หอบกลางวัน (ครั้ง/สัปดาห์)</label><input type="number" id="nv-day" value="${v.daytime||0}"></div>
       <div class="fg"><label>หอบกลางคืน (ครั้ง/สัปดาห์)</label><input type="number" id="nv-night" value="${v.nighttime||0}"></div>
-      <div class="fg"><label>ใช้ยาฉุกเฉิน (puffs/สัปดาห์)</label><input type="number" id="nv-rescue" value="${v.rescue||0}"></div>
+      <div class="fg"><label>ใช้ยา Reliever (puffs/สัปดาห์)</label><input type="number" id="nv-rescue" value="${v.rescue||0}"></div>
       <div class="fg"><label>ER visits (สะสม)</label><input type="number" id="nv-er" value="${v.erCount||0}"></div>
       <div class="fg"><label>ACT Score</label><input type="number" id="nv-act" value="${v.actScore||''}" min="5" max="25"></div>
       <div class="fg"><label>GINA Step (ถ้าทราบ)</label>
         <select id="nv-gina"><option value="">ไม่ระบุ</option>${[1,2,3,4,5].map(n=>`<option value="${n}" ${v.ginaStep==n?'selected':''}>Step ${n}</option>`).join('')}</select>
       </div>
     </div>
-    <div class="fg"><label>⚠️ ยาพ่นฉุกเฉินเหลืออยู่ไหม?</label>
+    <div class="fg"><label>💨 ยาพ่น Reliever เหลืออยู่ไหม?</label>
       <select id="nv-rescue-left">
         <option value="yes" ${v.rescueLeft==='yes'?'selected':''}>✅ มีเหลือ</option>
         <option value="no" ${v.rescueLeft==='no'?'selected':''}>❌ หมดแล้ว</option>
@@ -850,12 +1199,14 @@ function openNurseVerify(vid){
     <div class="fg"><label>บันทึกพยาบาล / แผนการรักษา</label>
       <textarea id="nv-notes" placeholder="บันทึกเพิ่มเติม...">${v.nurseNotes||''}</textarea>
     </div>
+
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
       <button class="btn bs" onclick="saveNurseVerify()">💾 บันทึกยืนยัน</button>
-      <button class="btn bp" onclick="fwdToPharm()">➡️ ส่งต่อเภสัช</button>
-      <button class="btn bw" onclick="fwdToDoctor()">🩺 ส่งต่อแพทย์</button>
+      <button class="btn bp" onclick="fwdToPharm()">➡️ ส่งต่อเภสัช (ปกติ)</button>
+      <button class="btn" style="background:#e65100;color:#fff;" onclick="fwdConsultPharm()">🔔 Consult เภสัช</button>
       <button class="btn bgray" onclick="document.getElementById('nv-form').style.display='none'">ยกเลิก</button>
     </div>`;
+  // returnedInhalers now handled by pharmacist
 }
 function saveNurseVerify(){
   const v=DB.visits.find(x=>x.id===nurseVisitId);if(!v)return;
@@ -867,10 +1218,21 @@ function saveNurseVerify(){
   v.ginaStep=document.getElementById('nv-gina').value||null;
   v.rescueLeft=document.getElementById('nv-rescue-left').value;
   v.nurseNotes=document.getElementById('nv-notes').value;
+  v.returnedInhalers=_nvReturns.slice();
   v.nurseVerified=true;
   v.nurseAt=new Date().toISOString();
   saveDB();toast('บันทึกยืนยันแล้ว ✅');
 }
+let _nvReturns=[];
+function nvAddReturn(){
+  const drugId=document.getElementById('nv-return-drug').value;
+  const qty=+(document.getElementById('nv-return-qty').value||1);
+  if(!drugId){toast('เลือกยาก่อน','w');return;}
+  const drug=DB.drugs.find(d=>d.id===drugId);
+  _nvReturns.push({drugId,drugName:drug?.name||drugId,qty});
+  renderNvReturnList();
+}
+// renderNvReturnList moved to pharmacist (renderPhReturnList)
 function fwdToPharm(){
   saveNurseVerify();
   const v=DB.visits.find(x=>x.id===nurseVisitId);if(!v)return;
@@ -885,46 +1247,147 @@ function fwdToDoctor(){
   toast('ส่งต่อแพทย์แล้ว 🩺');
   vNurseQueue();
 }
+function fwdConsultPharm(){
+  saveNurseVerify();
+  const v=DB.visits.find(x=>x.id===nurseVisitId);if(!v)return;
+  v.status='pending_pharm';
+  v.consultPharm=true;
+  saveDB();
+  toast('ส่ง Consult เภสัช แล้ว 🔔');
+  vNurseQueue();
+}
 
 // ---- DOCTOR VIEW ----
 function vDoctorSummary(){
   const _rescueBanner=getRescueAlertBanner();
-  const pending=DB.visits.filter(v=>v.status==='pending_doctor')
-    .sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
+  const todayStr=today();
+  const todayVisits=DB.visits.filter(v=>(v.nurseVerified||v.status==='done'||v.status==='pending_pharm')&&v.date===todayStr)
+    .sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   setContent(`
   <div class="card">
     ${_rescueBanner}
-    <div class="ch"><span class="ct">📄 ใบสรุปประเมิน – รอแพทย์ตรวจ</span><span class="pill py">${pending.filter(v=>v.status==='pending_doctor').length} ราย</span></div>
-    ${pending.length?`<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
-      <button class="btn bp bsm" onclick="fwdAllDoctor()">➡️ ส่งทั้งหมดไปเภสัช</button>
-      <button class="btn bd2 bsm" onclick="clearQueue('doctor')">🗑️ เคลียร์คิว</button>
-    </div>`:''}
+    <div class="ch"><span class="ct">📄 ดูสรุปผลประเมินผู้ป่วย</span><span class="pill pb">${todayVisits.length} ราย (วันนี้)</span></div>
     <div style="display:flex;gap:8px;margin-bottom:12px;">
-      <input id="dr-search" placeholder="🔍 ค้นหา HN หรือชื่อ..." style="flex:1;padding:9px 12px;border:1.5px solid var(--bd);border-radius:7px;font-size:13px;" oninput="drSearch()">
+      <input id="dr-search" placeholder="🔍 ค้นหา HN หรือชื่อ (ทุก visit)..." style="flex:1;padding:9px 12px;border:1.5px solid var(--bd);border-radius:7px;font-size:13px;" oninput="drSearch()">
     </div>
+    <div style="font-weight:700;font-size:13px;color:var(--pd);margin-bottom:8px;padding-left:2px;">📅 ผู้ป่วยวันนี้ (${fmtShort(todayStr)})</div>
     <div id="dr-list">
-    ${pending.map(v=>`
-      <div class="qi" onclick="openDrSummary('${v.id}')">
+    ${todayVisits.length?todayVisits.map(v=>`
+      <div class="qi" onclick="openDrSummaryModal('${v.id}')">
         <div class="qih">
           <span><strong>${v.hn}</strong> – ${v.name}</span>
-          <span class="pill ${v.status==='pending_doctor'?'py':'pb'}">${v.status==='pending_doctor'?'🩺 รอแพทย์':'ดูแล้ว'}</span>
+          <div style="display:flex;gap:4px;align-items:center;">
+            ${v.consultPharm?'<span class="consult-badge">CONSULT</span>':''}
+            <span class="pill ${v.status==='done'?'pg':v.status==='pending_pharm'?'pb':'py'}">${v.status==='done'?'✅ เสร็จ':v.status==='pending_pharm'?'💊 รอเภสัช':'📋 กำลังดำเนินการ'}</span>
+          </div>
         </div>
-        <div style="font-size:12px;color:var(--tm);">📅 ${fmt(v.date)} · ${dxPill(v.dx||getPatDx(v.hn))} · ${scoreLabel(v)} · Adherence: ${v.adherenceScore!=null?v.adherenceScore+'/4':'–'} · บันทึกโดย: ${v.by==='nurse'?'พยาบาล'+(v.nurseName?' ('+v.nurseName+')':''):v.by||'ผู้ป่วย'}</div>
-      </div>`).join('')||'<div style="text-align:center;padding:24px;color:var(--tm);">ไม่มีรายการ</div>'}
+        <div style="font-size:12px;color:var(--tm);">${dxPill(v.dx||getPatDx(v.hn))} · ${scoreLabel(v)} · Adh: ${v.adherenceScore!=null?v.adherenceScore+'/4':'–'} · ${v.by==='nurse'?'👩‍⚕️ พยาบาล'+(v.nurseName?' ('+v.nurseName+')':''):v.by==='caregiver'?'👨‍👩‍👧 ผู้ดูแล':'👤 ผู้ป่วย'}</div>
+      </div>`).join(''):'<div style="text-align:center;padding:24px;color:var(--tm);">ไม่มีผู้ป่วยวันนี้</div>'}
     </div>
-    <div id="dr-detail" style="display:none;margin-top:16px;"></div>
+  </div>
+  <!-- Doctor Summary Modal -->
+  <div id="dr-summary-modal" class="mo" style="display:none;">
+    <div class="mb" style="max-width:700px;max-height:88vh;overflow-y:auto;padding:0;">
+      <div class="mh" style="position:sticky;top:0;z-index:10;">
+        <h3 id="dr-modal-title">📄 สรุปผลประเมิน</h3>
+        <button class="mx" onclick="closeModal('dr-summary-modal')">×</button>
+      </div>
+      <div id="dr-modal-body" style="padding:0;"></div>
+    </div>
   </div>`);
 }
 function drSearch(){
   const q=(document.getElementById('dr-search')||{}).value?.toLowerCase()||'';
-  const all=DB.visits.filter(v=>v.nurseVerified||v.status==='pending_doctor');
+  const todayStr=today();
+  const all=q
+    ? DB.visits.filter(v=>v.nurseVerified||v.status==='done'||v.status==='pending_pharm')
+    : DB.visits.filter(v=>(v.nurseVerified||v.status==='done'||v.status==='pending_pharm')&&v.date===todayStr);
   const filtered=all.filter(v=>!q||(v.hn+v.name).toLowerCase().includes(q));
-  document.getElementById('dr-list').innerHTML=filtered.map(v=>`
-    <div class="qi" onclick="openDrSummary('${v.id}')">
-      <div class="qih"><span><strong>${v.hn}</strong> – ${v.name}</span><span>${fmt(v.date)}</span></div>
-      <div style="font-size:12px;color:var(--tm);">${dxPill(v.dx||getPatDx(v.hn))} ${scoreLabel(v)}</div>
-    </div>`).join('')||'<div style="color:var(--tm);padding:10px;">ไม่พบข้อมูล</div>';
+  filtered.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  const label=q?`🔍 ผลการค้นหา "${q}" (${filtered.length} รายการ)`:`📅 ผู้ป่วยวันนี้ (${fmtShort(todayStr)})`;
+  document.getElementById('dr-list').innerHTML=`<div style="font-weight:700;font-size:13px;color:var(--pd);margin-bottom:8px;padding-left:2px;">${label}</div>`+
+    (filtered.map(v=>`
+    <div class="qi" onclick="openDrSummaryModal('${v.id}')">
+      <div class="qih"><span><strong>${v.hn}</strong> – ${v.name}</span>
+        <div style="display:flex;gap:4px;">
+          ${v.consultPharm?'<span class="consult-badge">CONSULT</span>':''}
+          <span class="pill ${v.status==='done'?'pg':v.status==='pending_pharm'?'pb':'py'}" style="font-size:10px;">${v.status==='done'?'✅ เสร็จ':v.status==='pending_pharm'?'💊 รอเภสัช':'📋'}</span>
+        </div>
+      </div>
+      <div style="font-size:12px;color:var(--tm);">📅 ${fmt(v.date)} · ${dxPill(v.dx||getPatDx(v.hn))} · ${scoreLabel(v)}</div>
+    </div>`).join('')||'<div style="color:var(--tm);padding:10px;text-align:center;">ไม่พบข้อมูล</div>');
 }
+function openDrSummaryModal(vid){
+  const modal=document.getElementById('dr-summary-modal');
+  const bodyEl=document.getElementById('dr-modal-body');
+  const titleEl=document.getElementById('dr-modal-title');
+  if(!modal||!bodyEl)return;
+  const v=DB.visits.find(x=>x.id===vid);if(!v)return;
+  titleEl.textContent=`📄 ${v.name} (HN: ${v.hn}) – ${fmt(v.date)}`;
+  // Reuse openDrSummary but render to modal body
+  const lastDisp=DB.dispensing.filter(d=>d.hn===v.hn).sort((a,b)=>new Date(b.date)-new Date(a.date))[0];
+  const actCls=!v.actScore?'':v.actScore===25?'sc2':v.actScore>=20?'sp2':'su';
+  const actLbl=!v.actScore?'–':v.actScore===25?'Completely Controlled':v.actScore>=20?'Well Controlled':'Not Controlled';
+  const _vdx=normalizeDx(v.dx||getPatDx(v.hn));
+  const adhLbl=v.adherenceScore==null?'–':v.adherenceScore===0?'High (ดี)':v.adherenceScore<=2?'Medium (ปานกลาง)':'Low (ต่ำ)';
+  bodyEl.innerHTML=buildDrDetailHTML(v,lastDisp,actCls,actLbl,_vdx,adhLbl);
+  modal.style.display='flex';
+  modal.scrollTop=0;
+}
+function buildDrDetailHTML(v,lastDisp,actCls,actLbl,_vdx,adhLbl){
+  const _isA=_vdx==='Asthma'||_vdx==='ACO';
+  const _isC=_vdx==='COPD'||_vdx==='ACO';
+  const ta=v.techAssessment;
+  const techBadge=ta?`<span class="pill ${ta.score>=6?'pg':ta.score>=4?'py':'pr'}" style="font-size:11px;">💨 เทคนิค ${ta.score}/7</span>`:'' ;
+  return `
+  <div style="background:linear-gradient(135deg,var(--pd),var(--p));color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+    <div>
+      <h3 style="font-size:16px;margin:0;">${v.name} <span style="opacity:.8;font-size:14px;">(HN: ${v.hn})</span></h3>
+      <div style="font-size:12px;opacity:.85;margin-top:3px;">📅 ${fmt(v.date)} · ${v.by==='nurse'?'👩‍⚕️ พยาบาล'+(v.nurseName?' ('+v.nurseName+')':''):v.by==='caregiver'?'👨‍👩‍👧 ผู้ดูแล':'👤 ผู้ป่วย'}</div>
+    </div>
+    <div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
+      ${dxPill(v.dx||getPatDx(v.hn))}
+      ${v.consultPharm?'<span class="consult-badge">CONSULT</span>':''}
+      <span class="pill ${v.status==='done'?'pg':v.status==='pending_pharm'?'pb':'py'}">${v.status==='done'?'✅ เสร็จสิ้น':v.status==='pending_pharm'?'💊 รอเภสัช':'📋'}</span>
+      ${techBadge}
+    </div>
+  </div>
+  ${(()=>{
+    const rL=v.rescueLeft;const rP=v.rescue??null;const rER=v.erCount??0;const rAdmit=v.admitCount??0;
+    if(!rL&&rP===null&&!rER)return '';
+    const isU=rL==='no'||(rP!=null&&rP>4);const isW=rL==='almost'||(rP!=null&&rP>=2&&rP<=4);
+    const bg=isU?'#fff5f5':isW?'#fffde7':'#f0f4ff';const border=isU?'#ef9a9a':isW?'#ffe082':'#90caf9';
+    return `<div style="margin:12px 16px 0;background:${bg};border:1.5px solid ${border};border-radius:8px;padding:10px 14px;font-size:12.5px;">
+      <div style="font-weight:800;margin-bottom:5px;">💨 ข้อมูล Reliever (จากพยาบาล)</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:4px 14px;">
+        <div>ใช้ยา: <b>${rP!=null?rP+' puffs/สัปดาห์':'–'}</b></div>
+        <div>ยาเหลือ: <b>${rL==='yes'?'✅ มี':rL==='no'?'❌ หมด':rL==='almost'?'⚠️ เกือบหมด':'–'}</b></div>
+        ${rER?`<div>🚑 ER: <b>${rER} ครั้ง</b></div>`:''}
+        ${rAdmit?`<div>🏥 Admit: <b>${rAdmit} ครั้ง</b></div>`:''}
+      </div>
+    </div>`;
+  })()}
+  <div style="padding:14px 16px;">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px;">
+      ${(()=>{let h='';
+        if(_isA&&v.actScore){const c=v.actScore>=20?'sc2':v.actScore>=15?'sp2':'su';h+=`<div class="sb ${c}" style="padding:12px;"><div class="sn" style="font-size:28px;">${v.actScore}</div><div class="sl3">ACT – ${actLbl}</div></div>`;}
+        if(_isC&&v.catScore){const c=v.catScore<=10?'sc2':v.catScore<=20?'sp2':'su';h+=`<div class="sb ${c}" style="padding:12px;"><div class="sn" style="font-size:28px;">${v.catScore}</div><div class="sl3">CAT – ${v.catScore<=10?'Low':v.catScore<=20?'Medium':v.catScore<=30?'High':'Very High'} Impact</div></div>`;}
+        if(_isC&&v.mmrc!=null)h+=`<div style="padding:8px 12px;background:#fff3e0;border-radius:7px;font-size:13px;">🌬️ mMRC Grade <b>${v.mmrc}</b></div>`;
+        if(!h)h='<div style="background:#f0f0f0;border-radius:8px;padding:12px;text-align:center;color:var(--tm);grid-column:1/-1;">ยังไม่มีคะแนนประเมิน</div>';
+        return h;})()}
+    </div>
+    <div style="padding:10px;background:#f8fbff;border-radius:7px;font-size:13px;margin-bottom:10px;">
+      💊 Adherence (MMAS-4): <b>${adhLbl}</b> &nbsp;·&nbsp;
+      🩺 ${_vdx==='COPD'?'GOLD Group':'GINA Step'}: <b>${v.ginaStep?'Step '+v.ginaStep:'ไม่ระบุ'}</b>
+    </div>
+    ${v.nurseNotes?`<div style="padding:10px;background:#fffde7;border-radius:7px;font-size:13px;margin-bottom:8px;"><b>📝 บันทึกพยาบาล:</b> ${v.nurseNotes}</div>`:''}
+    ${ta?`<div style="padding:10px;background:#e8f5e9;border-radius:7px;font-size:13px;margin-bottom:8px;"><b>💨 เทคนิคพ่นยา (${(ta.type||'mdi').toUpperCase()}):</b> <span style="font-weight:700;color:${ta.score>=6?'#2e7d32':ta.score>=4?'#e65100':'#c62828'};">${ta.score}/7</span>${ta.note?` – ${ta.note}`:''}</div>`:''}
+    ${lastDisp?`<div style="padding:10px;background:var(--sl);border-radius:7px;font-size:13px;margin-bottom:8px;"><b>💊 ยาจ่ายครั้งล่าสุด (${fmt(lastDisp.date)}):</b><br>${(lastDisp.drugs||[]).map(d=>`${d.drug||'–'} – ${d.canisters?.filter(c=>!c.isOld).length||0} กระบอกใหม่ (หมด ${d.lastEmptyDate?fmtShort(d.lastEmptyDate):'–'})`).join('<br>')}</div>`:''}
+    ${v.notes?`<div style="padding:10px;background:#f5f5f5;border-radius:7px;font-size:13px;margin-bottom:8px;"><b>💬 หมายเหตุผู้ป่วย:</b> ${v.notes}</div>`:''}
+    ${v.doctorPlan?`<div style="background:#fffde7;border-radius:7px;padding:10px;font-size:13px;margin-bottom:8px;"><b>🩺 Plan:</b> ${v.doctorPlan}</div>`:''}
+    ${v.doctorNote?`<div style="background:#e8f2fc;border-radius:7px;padding:10px;font-size:13px;margin-bottom:8px;"><b>📬 Note ถึงเภสัช:</b> ${v.doctorNote}</div>`:''}
+    ${clinicalRecHTML(v,lastDisp)}
+  </div>`;}
 function openDrSummary(vid){
   const v=DB.visits.find(x=>x.id===vid);if(!v)return;
   const actCls=!v.actScore?'':v.actScore===25?'sc2':v.actScore>=20?'sp2':'su';
@@ -940,17 +1403,32 @@ function openDrSummary(vid){
     <div style="background:linear-gradient(135deg,var(--pd),var(--p));color:#fff;padding:14px 18px;display:flex;justify-content:space-between;align-items:center;">
       <div><h3 style="font-size:16px;">${v.name} <span style="opacity:.8;font-size:14px;">(HN: ${v.hn})</span> ${dxPill(v.dx||getPatDx(v.hn))}</h3>
       <div style="font-size:12px;opacity:.85;">📅 ${fmt(v.date)} · บันทึกโดย: ${v.by==='nurse'?'พยาบาล'+(v.nurseName?' ('+v.nurseName+')':''):v.by==='caregiver'?'ผู้ดูแล'+(v.caregiver?' ('+v.caregiver+')':''):v.by||'ผู้ป่วย'}</div></div>
-      <span class="pill ${v.status==='pending_doctor'?'py':'pg'}">${v.status==='pending_doctor'?'รอแพทย์':'ตรวจแล้ว'}</span>
+      <span class="pill ${v.status==='done'?'pg':v.status==='pending_pharm'?'pb':'py'}">${v.status==='done'?'✅ เสร็จสิ้น':v.status==='pending_pharm'?'💊 รอเภสัช':'📋 รอดำเนินการ'}</span>
     </div>
+    ${(()=>{
+      const _rL=v.rescueLeft;const _rP=v.rescue??null;const _rER=v.erCount??0;const _rAd=v.admitCount??0;
+      const _urg=_rL==='no'||(_rP!=null&&_rP>4);const _warn=_rL==='almost'||(_rP!=null&&_rP>=2&&_rP<=4);
+      const _bg=_urg?'#fff5f5':_warn?'#fffde7':'#f0f4ff';
+      const _br=_urg?'#ef9a9a':_warn?'#ffe082':'#90caf9';
+      const _ic=_urg?'🚨':_warn?'⚠️':'💨';
+      const _ll=_rL==='yes'?'<span style="color:#2e7d32;">✅ มีเหลือ</span>':_rL==='no'?'<span style="color:#c62828;">❌ หมดแล้ว</span>':_rL==='almost'?'<span style="color:#e65100;">⚠️ เกือบหมด</span>':'<span style="color:#666;">ไม่ทราบ</span>';
+      return `<div style="margin:0 16px 10px;background:${_bg};border:1.5px solid ${_br};border-radius:8px;padding:10px 14px;">
+        <div style="font-weight:800;font-size:13px;margin-bottom:5px;">${_ic} ยาพ่น Reliever (ข้อมูลจากพยาบาล)</div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px 20px;font-size:12.5px;">
+          <span>🫧 <b>Reliever/สัปดาห์:</b> ${_rP!=null?_rP+' puffs/สัปดาห์':'ไม่ระบุ'}</span>
+          <span>💊 <b>เหลืออยู่:</b> ${_ll}</span>
+          ${_rER>0?`<span>🚑 <b>ER:</b> ${_rER} ครั้ง</span>`:''}
+          ${_rAd>0?`<span>🏥 <b>Admit:</b> ${_rAd} ครั้ง</span>`:''}
+        </div>
+      </div>`;
+    })()}
     <div style="padding:16px;display:grid;grid-template-columns:1fr 1fr;gap:14px;">
       <div>
         <h4 style="color:var(--pd);margin-bottom:8px;">😮‍💨 อาการ (4 สัปดาห์)</h4>
         <div style="font-size:13px;line-height:2;">
           🌞 หอบกลางวัน: <b>${v.daytime??'–'}</b> ครั้ง/สัปดาห์<br>
           🌙 หอบกลางคืน: <b>${v.nighttime??'–'}</b> ครั้ง/สัปดาห์<br>
-          🫧 Rescue puffs: <b>${v.rescue??'–'}</b>/สัปดาห์<br>
-          🚨 ER visits: <b>${v.erCount??'–'}</b> ครั้ง<br>
-          💊 ยาฉุกเฉินเหลือ: <b>${v.rescueLeft==='yes'?'✅มี':v.rescueLeft==='no'?'❌หมด':v.rescueLeft==='almost'?'⚠️เกือบหมด':'ไม่ทราบ'}</b>
+          🚨 ER visits: <b>${v.erCount??'–'}</b> ครั้ง
         </div>
       </div>
       <div>
@@ -977,22 +1455,13 @@ function openDrSummary(vid){
       ${(lastDisp.drugs||[]).map(d=>`${d.drug||'–'} – ${d.canisters?.filter(c=>!c.isOld).length||0} กระบอกใหม่ (คาดหมดถึง ${d.lastEmptyDate?fmtShort(d.lastEmptyDate):'–'})`).join('<br>')}
     </div>`:''}
     ${v.notes?`<div style="margin:0 16px 12px;padding:10px;background:#f5f5f5;border-radius:7px;font-size:13px;"><b>💬 หมายเหตุผู้ป่วย:</b> ${v.notes}</div>`:''}
+    ${clinicalRecHTML(v,lastDisp)}
     <div style="padding:14px 16px;border-top:1px solid var(--bd);">
-      <div class="fg"><label>🩺 Plan การรักษา (บันทึกในเวชระเบียน)</label>
-        <textarea id="dr-plan-${vid}" placeholder="บันทึก plan การรักษา ปรับยา ส่งต่อ ฯลฯ..." rows="3">${v.doctorPlan||''}</textarea>
-      </div>
-      <div class="fg" style="margin-top:10px;">
-        <label>📬 Note ถึงเภสัช / แพทย์ท่านอื่น <span style="font-weight:400;color:var(--tm);font-size:12px;">(จะแสดงในหน้าจ่ายยา)</span></label>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;" id="dr-note-chips-${vid}">
-          ${['ปรับยาพ่นเพิ่มขึ้น','ปรับยาพ่นลดลง','เปลี่ยนยาพ่นใหม่','ประเมินพ่นยาอีกครั้ง','ผู้ป่วยพ่นยาผิดวิธี','อื่นๆ (ระบุ)'].map(t=>`
-            <button type="button" onclick="drNoteChip('${vid}','${t}')" style="padding:4px 10px;font-size:12px;border:1.5px solid var(--ac);border-radius:20px;background:#fff;color:var(--p);cursor:pointer;white-space:nowrap;">${t}</button>`).join('')}
-        </div>
-        <textarea id="dr-note-${vid}" placeholder="กดเลือกรายการด้านบน หรือพิมพ์เอง..." rows="2" style="border-color:var(--ac);">${v.doctorNote||''}</textarea>
-      </div>
+      ${v.doctorPlan?`<div style="background:#fffde7;border-radius:7px;padding:10px 12px;font-size:13px;margin-bottom:8px;"><b>🩺 Plan:</b> ${v.doctorPlan}</div>`:''}
+      ${v.doctorNote?`<div style="background:#e8f2fc;border-radius:7px;padding:10px 12px;font-size:13px;margin-bottom:8px;"><b>📬 Note ถึงเภสัช:</b> ${v.doctorNote}</div>`:''}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
-        <button class="btn bs" onclick="saveDrPlan('${vid}')">💾 บันทึก</button>
-        <button class="btn bp" onclick="fwdDrToPharm('${vid}')">➡️ ส่งต่อเภสัช</button>
         <button class="btn bgray" onclick="document.getElementById('dr-detail').style.display='none'">ปิด</button>
+        <button class="btn bgray" onclick="closeModal('dr-summary-modal')">✖ ปิด</button>
       </div>
     </div>
   </div>`;
@@ -1056,11 +1525,11 @@ function vPhQueue(){
       <div class="qi" onclick="openPhDisp('${v.hn}','${v.id}')">
         <div class="qih">
           <span><strong>${v.hn}</strong> – ${v.name}</span>
-          <span class="pill py">รอจ่ายยา</span>
+          ${v.consultPharm?'<span class="consult-badge">🔔 CONSULT</span>':''}<span class="pill py">รอจ่ายยา</span>
         </div>
         <div style="font-size:12px;color:var(--tm);">📅 ${fmt(v.date)} ·
-          ${v.doctorNote?`<span class="pill py" style="font-size:10px;">📝 มี Note แพทย์</span> `:''}
-          ${v.type==='import'||v.type==='import_queue'?`<span class="pill pb">📋 นำเข้า</span> ${v.importDrugs?v.importDrugs.length+' รายการยา':''}`:`ACT: ${v.actScore||'–'} · ยาฉุกเฉิน: ${v.rescueLeft==='yes'?'✅':v.rescueLeft==='no'?'❌':'⚠️'}`}
+          ${v.consultPharm?`<span class="consult-badge">🔔 CONSULT</span> `:''}${v.doctorNote?`<span class="pill py" style="font-size:10px;">📝 มี Note แพทย์</span> `:''}
+          ${v.type==='import'||v.type==='import_queue'?`<span class="pill pb">📋 นำเข้า</span> ${v.importDrugs?v.importDrugs.length+' รายการยา':''}`:`ACT: ${v.actScore||'–'} · Reliever: ${v.rescueLeft==='yes'?'✅':v.rescueLeft==='no'?'❌':'⚠️'}`}
         </div>
       </div>`).join('')}
   </div>`);
@@ -1079,6 +1548,7 @@ function vPhDisp(){
       <div class="fg"><label>วันนัดครั้งถัดไป</label><input type="date" id="ph-next" value="${addDays(today(),90).toISOString().split('T')[0]}" onchange="syncThaiLabel('ph-next')"><div id="ph-next-th" style="font-size:12px;color:var(--p);margin-top:3px;font-weight:600;"></div></div>
     </div>
     <div id="ph-doctor-note-banner"></div>
+    <div id="ph-rescue-banner"></div>
     <div class="al ali"><span>ℹ️</span><span>เลือกยาพ่นที่แพทย์สั่ง ระบบจะคำนวณจำนวนกระบอกและวันเปิดใช้-หมดของแต่ละกระบอก</span></div>
     <div id="ph-drug-list"></div>
     <button class="btn bo bsm" onclick="addPhDrug()" style="margin-bottom:14px;">+ เพิ่มยา</button>
@@ -1088,27 +1558,142 @@ function vPhDisp(){
       <button class="btn bp" onclick="printSticker()">🖨️ พิมพ์สติ๊กเกอร์</button>
     </div>
   </div>
+
+  <!-- QUICK ACTION BUTTONS -->
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;padding:10px 0;border-top:1px solid var(--bd);">
+    <button class="btn" style="background:#e8f5e9;color:#1b5e20;border:1.5px solid #a5d6a7;font-weight:600;" onclick="openPhReturnModal()">🔄 บันทึกยาคืน</button>
+    <button class="btn" style="background:#e8f2fc;color:var(--pd);border:1.5px solid #90caf9;font-weight:600;" onclick="openPhTechModal()">💨 ประเมินเทคนิคพ่นยา</button>
+  </div>
+
+  <!-- RETURNED INHALERS MODAL -->
+  <div id="ph-return-modal" class="mo" style="display:none;">
+    <div class="mb" style="max-width:500px;">
+      <div class="mh"><h3>🔄 บันทึกยาพ่นที่เหลือ/คืน</h3><button class="mx" onclick="closeModal('ph-return-modal')">×</button></div>
+      <div class="mc">
+        <div style="font-size:12px;color:var(--tm);margin-bottom:10px;">บันทึกยาพ่นที่ผู้ป่วยนำกลับมา หรือยังเหลืออยู่ที่บ้าน</div>
+        <div id="ph-return-list-modal" style="margin-bottom:10px;"></div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;padding:10px;background:#f8fbff;border-radius:8px;">
+          <select id="ph-return-drug" style="flex:1;min-width:160px;font-size:13px;padding:7px;border:1.5px solid var(--bd);border-radius:6px;">
+            <option value="">-- เลือกยา --</option>
+            ${DB.drugs.map(d=>`<option value="${d.id}">${d.name}</option>`).join('')}
+          </select>
+          <input type="number" id="ph-return-qty" value="1" min="0" max="20" style="width:60px;padding:7px;border:1.5px solid var(--bd);border-radius:6px;">
+          <span style="font-size:12px;color:var(--tm);">หลอด</span>
+          <button class="btn bs bsm" onclick="phAddReturn()">+ เพิ่ม</button>
+        </div>
+      </div>
+      <div class="mf"><button class="btn bgray" onclick="closeModal('ph-return-modal')">ปิด</button><button class="btn bs" onclick="savePhReturns();closeModal('ph-return-modal')">💾 บันทึก</button></div>
+    </div>
+  </div>
+
+  <!-- INHALER TECHNIQUE MODAL -->
+  <div id="ph-tech-modal" class="mo" style="display:none;">
+    <div class="mb" style="max-width:560px;max-height:85vh;overflow-y:auto;">
+      <div class="mh"><h3>💨 ประเมินเทคนิคการพ่นยา</h3><button class="mx" onclick="closeModal('ph-tech-modal')">×</button></div>
+      <div class="mc">
+        <div id="ph-tech-type" style="display:flex;gap:8px;margin-bottom:14px;">
+          <button class="btn bp bsm" onclick="phTechTab('mdi')" id="ph-tech-mdi-btn">MDI (กระป๋องอัดแรงดัน)</button>
+          <button class="btn bgray bsm" onclick="phTechTab('dpi')" id="ph-tech-dpi-btn">DPI (ยาพ่นแบบผง)</button>
+        </div>
+        <div id="ph-tech-mdi" class="ph-tech-panel">
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px;color:var(--pd);">ขั้นตอนมาตรฐาน MDI (7 ข้อ)</div>
+          ${[['mdi1','ถอดฝาปิด และเขย่ายาพ่น 4-5 ครั้ง'],['mdi2','หายใจออกช้าๆ จนสุด (ห่างจากปากยา)'],['mdi3','คาบปากยาพ่นให้สนิท (หรือใช้ Spacer)'],['mdi4','เริ่มหายใจเข้าพร้อมกดยา 1 ครั้งพร้อมกัน'],['mdi5','หายใจเข้าช้าๆ ลึกๆ จนเต็มปอด (~3-5 วินาที)'],['mdi6','กลั้นหายใจ ≥ 10 วินาที'],['mdi7','หายใจออกช้าๆ ทางจมูก']].map(([id,label],i)=>`
+          <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;background:#f8fbff;border:1px solid #e3eaf8;margin-bottom:6px;">
+            <span style="font-weight:800;color:var(--pd);min-width:22px;">${i+1}.</span>
+            <span style="flex:1;font-size:13px;line-height:1.4;">${label}</span>
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;flex-shrink:0;">
+              <input type="checkbox" id="${id}" style="width:18px;height:18px;cursor:pointer;">
+              <span style="font-size:12px;color:#2e7d32;font-weight:600;">ทำได้</span>
+            </label>
+          </div>`).join('')}
+          <div id="mdi-score" style="margin-top:10px;padding:10px 14px;border-radius:8px;background:var(--pl);font-weight:700;font-size:14px;"></div>
+        </div>
+        <div id="ph-tech-dpi" class="ph-tech-panel" style="display:none;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px;color:var(--pd);">ขั้นตอนมาตรฐาน DPI (7 ข้อ)</div>
+          ${[['dpi1','เปิดฝาหรือบิดยาให้ถูกต้อง (Load dose)'],['dpi2','หายใจออกช้าๆ จนสุด (ห่างจากปากยา)'],['dpi3','คาบปากยาพ่นให้สนิท'],['dpi4','หายใจเข้าแรงและเร็วจนเต็มปอด'],['dpi5','กลั้นหายใจ ≥ 10 วินาที'],['dpi6','หายใจออกช้าๆ ทางจมูก (ห่างจากยา)'],['dpi7','ปิดฝาหรือหมุนกลับให้ถูกต้อง']].map(([id,label],i)=>`
+          <div style="display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;background:#f8fbff;border:1px solid #e3eaf8;margin-bottom:6px;">
+            <span style="font-weight:800;color:var(--pd);min-width:22px;">${i+1}.</span>
+            <span style="flex:1;font-size:13px;line-height:1.4;">${label}</span>
+            <label style="display:flex;align-items:center;gap:5px;cursor:pointer;flex-shrink:0;">
+              <input type="checkbox" id="${id}" style="width:18px;height:18px;cursor:pointer;">
+              <span style="font-size:12px;color:#2e7d32;font-weight:600;">ทำได้</span>
+            </label>
+          </div>`).join('')}
+          <div id="dpi-score" style="margin-top:10px;padding:10px 14px;border-radius:8px;background:var(--pl);font-weight:700;font-size:14px;"></div>
+        </div>
+        <div class="fg" style="margin-top:12px;">
+          <label>📝 หมายเหตุ / จุดที่ต้องแก้ไข</label>
+          <textarea id="ph-tech-note" placeholder="ระบุขั้นตอนที่ทำไม่ถูกต้อง แนะนำเพิ่มเติม..." rows="3"></textarea>
+        </div>
+      </div>
+      <div class="mf"><button class="btn bgray" onclick="closeModal('ph-tech-modal')">ยกเลิก</button><button class="btn bs" onclick="savePhTechnique();closeModal('ph-tech-modal')">💾 บันทึกผล</button></div>
+    </div>
+  </div>
+
   <div id="sticker-area" style="display:none"></div>`);
-  calcItems=[];
-  setTimeout(()=>{syncThaiLabel('ph-date');syncThaiLabel('ph-next');},0);
+  calcItems=[];_phReturns=[];
+  setTimeout(()=>{
+    syncThaiLabel('ph-date');syncThaiLabel('ph-next');
+    renderPhReturnList();
+    // Technique wiring now in openPhTechModal()
+  },0);
 }
 function openPhDisp(hn,vid){
   phHN=hn;phVisitId=vid;
   const v=DB.visits.find(x=>x.id===vid);
   vPhDisp();
   if(hn) document.getElementById('ph-hn').value=hn;
-  if(v){
-    document.getElementById('ph-name').value=v.name||'';
-    // Set next appointment date from visit if available
-    if(v.nextAppt){
-      document.getElementById('ph-next').value=v.nextAppt||''; syncThaiLabel('ph-next');
-    }
-  }
+  // Resolve name: from visit → patients → any visit by hn
+  const ptRec=DB.patients.find(x=>x.hn===hn);
+  const altVisit=DB.visits.filter(x=>x.hn===hn).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))[0];
+  const resolvedName=(v?.name)||(ptRec?.name)||(altVisit?.name)||'';
+  if(resolvedName) document.getElementById('ph-name').value=resolvedName;
+  if(v?.nextAppt){document.getElementById('ph-next').value=v.nextAppt||'';syncThaiLabel('ph-next');}
+  // Reset returned inhalers
+  _phReturns=(v?.returnedInhalers||[]).slice();
+  setTimeout(()=>{renderPhReturnList();},100);
   // Priority: import drugs > history > blank
   // Show doctor note if exists
   const noteBanner=document.getElementById('ph-doctor-note-banner');
   if(noteBanner&&v&&v.doctorNote){
     noteBanner.innerHTML=`<div class="al alw" style="margin-bottom:12px;"><span>📬</span><div><strong>Note จากแพทย์:</strong><br><span style="font-size:13px;">${v.doctorNote}</span></div></div>`;
+  }
+  // Rescue inhaler summary from nurse assessment
+  const rescueBanner=document.getElementById('ph-rescue-banner');
+  if(rescueBanner&&v){
+    const rLeft=v.rescueLeft;
+    const rPuffs=v.rescue??null;
+    const rER=v.erCount??0;
+    const rAdmit=v.admitCount??0;
+    const scoreStr=(()=>{
+      const dx=normalizeDx(v.dx||getPatDx(v.hn));
+      if((dx==='Asthma'||dx==='ACO')&&v.actScore) return `ACT <b>${v.actScore}</b>/25`;
+      if((dx==='COPD'||dx==='ACO')&&v.catScore) return `CAT <b>${v.catScore}</b>/40`;
+      return null;
+    })();
+    // Severity colour: red if หมด/high use, yellow if almost/moderate
+    const isUrgent=rLeft==='no'||(rPuffs!=null&&rPuffs>4);
+    const isWarn=rLeft==='almost'||(rPuffs!=null&&rPuffs>=2&&rPuffs<=4);
+    const bg=isUrgent?'#fff5f5':isWarn?'#fffde7':'#f0f4ff';
+    const border=isUrgent?'#ef9a9a':isWarn?'#ffe082':'#90caf9';
+    const icon=isUrgent?'🚨':isWarn?'⚠️':'💨';
+    const leftLabel=rLeft==='yes'?'<span style="color:#2e7d32;">✅ ยังมีเหลือ</span>'
+                   :rLeft==='no'?'<span style="color:#c62828;">❌ หมดแล้ว</span>'
+                   :rLeft==='almost'?'<span style="color:#e65100;">⚠️ เกือบหมด</span>'
+                   :'<span style="color:#666;">ไม่ทราบ</span>';
+    rescueBanner.innerHTML=`
+      <div style="background:${bg};border:1.5px solid ${border};border-radius:8px;padding:10px 14px;margin-bottom:12px;">
+        <div style="font-weight:800;font-size:13px;margin-bottom:6px;">${icon} ข้อมูลยาพ่น Reliever (จากพยาบาล)</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px 16px;font-size:12.5px;">
+          <div>🫧 <b>ใช้ยา Reliever:</b> ${rPuffs!=null?rPuffs+' puffs/สัปดาห์':'ไม่ระบุ'}</div>
+          <div>💊 <b>ยาเหลืออยู่:</b> ${leftLabel}</div>
+          ${scoreStr?`<div>📊 <b>คะแนนล่าสุด:</b> ${scoreStr}</div>`:''}
+          ${rER>0?`<div>🚑 <b>ER visits:</b> ${rER} ครั้ง</div>`:''}
+          ${rAdmit>0?`<div>🏥 <b>Admit:</b> ${rAdmit} ครั้ง</div>`:''}
+        </div>
+        ${v.nurseNotes?`<div style="margin-top:6px;font-size:12px;color:#444;">📝 <b>บันทึกพยาบาล:</b> ${v.nurseNotes}</div>`:''}
+        ${v.returnedInhalers&&v.returnedInhalers.length?`<div style="margin-top:6px;font-size:12px;color:#333;">🔄 <b>ยาที่คืน:</b> ${v.returnedInhalers.map(r=>r.drugName+' '+r.qty+'หลอด').join(', ')}</div>`:''}
+      </div>`;
   }
   if(v&&v.type==='import'&&v.importDrugs&&v.importDrugs.length){
     // Pre-fill from Excel import data
@@ -1138,21 +1723,142 @@ function getPatientDrugs(hn){
   const rescue=DB.drugs.filter(d=>d.cat==='rescue');
   const ctrl=DB.drugs.filter(d=>d.cat==='controller');
   // Return prefill objects for the most common set (rescue first, then controller)
-  return [...ctrl,...rescue].slice(0,4).map(d=>({
+  return [...ctrl,...rescue].map(d=>({
     drugId:d.id,mode:'new',
     freqPerDay:d.cat==='rescue'?0:2,
     qty:1,
     dosePerUse:2,ppc:d.puffs
   }));
 }
+let _phReturns=[];
+function closeModal(id){const el=document.getElementById(id);if(el)el.style.display='none';}
+function openPhReturnModal(){
+  const hn=document.getElementById('ph-hn')?.value?.trim();
+  if(!hn){toast('กรุณากรอก HN ก่อน','e');return;}
+  const modal=document.getElementById('ph-return-modal');
+  if(modal){modal.style.display='flex';renderPhReturnListModal();}
+}
+function renderPhReturnListModal(){
+  const el=document.getElementById('ph-return-list-modal');if(!el)return;
+  if(!_phReturns.length){el.innerHTML='<div style="color:var(--tm);font-size:12px;padding:4px 0;">ยังไม่มีรายการ</div>';return;}
+  el.innerHTML=_phReturns.map((r,i)=>`<div style="display:flex;align-items:center;gap:8px;padding:7px 10px;background:#f0f4ff;border-radius:6px;margin-bottom:5px;font-size:13px;"><span style="flex:1;"><b>${r.drugName}</b></span><span style="color:var(--tm);">${r.qty} หลอด</span><button class="btn bd2 bsm" onclick="_phReturns.splice(${i},1);renderPhReturnListModal();">🗑️</button></div>`).join('');
+}
+function openPhTechModal(){
+  const hn=document.getElementById('ph-hn')?.value?.trim();
+  if(!hn){toast('กรุณากรอก HN ก่อน','e');return;}
+  const modal=document.getElementById('ph-tech-modal');if(!modal)return;
+  modal.style.display='flex';
+  const v=DB.visits.filter(x=>x.hn===hn).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))[0];
+  if(v?.techAssessment){
+    const ta=v.techAssessment;phTechTab(ta.type||'mdi');
+    (ta.steps||[]).forEach(s=>{const el=document.getElementById(s.id);if(el)el.checked=s.ok;});
+    const noteEl=document.getElementById('ph-tech-note');if(noteEl)noteEl.value=ta.note||'';
+  }else{phTechTab('mdi');}
+  setTimeout(()=>{
+    ['mdi1','mdi2','mdi3','mdi4','mdi5','mdi6','mdi7'].forEach(id=>{
+      const el=document.getElementById(id);
+      if(el){const h=()=>phCalcTechScore('mdi');el.removeEventListener('change',el._th||null);el._th=h;el.addEventListener('change',h);}
+    });
+    ['dpi1','dpi2','dpi3','dpi4','dpi5','dpi6','dpi7'].forEach(id=>{
+      const el=document.getElementById(id);
+      if(el){const h=()=>phCalcTechScore('dpi');el.removeEventListener('change',el._th||null);el._th=h;el.addEventListener('change',h);}
+    });
+    phCalcTechScore('mdi');phCalcTechScore('dpi');
+  },50);
+}
+function phTechTab(t){
+  ['mdi','dpi'].forEach(x=>{
+    const p=document.getElementById('ph-tech-'+x);
+    const b=document.getElementById('ph-tech-'+x+'-btn');
+    if(p)p.style.display=x===t?'block':'none';
+    if(b){b.className='btn bsm '+(x===t?'bp':'bgray');}
+  });
+  ['mdi','dpi'].forEach(x=>{
+    const el=document.getElementById(x+'-score');
+    if(el&&x===t)phCalcTechScore(x);
+  });
+}
+function phCalcTechScore(type){
+  const ids=type==='mdi'?['mdi1','mdi2','mdi3','mdi4','mdi5','mdi6','mdi7']:['dpi1','dpi2','dpi3','dpi4','dpi5','dpi6','dpi7'];
+  const score=ids.filter(id=>document.getElementById(id)?.checked).length;
+  const el=document.getElementById(type+'-score');
+  if(!el)return;
+  const pct=Math.round(score/7*100);
+  const color=pct>=86?'#2e7d32':pct>=57?'#e65100':'#c62828';
+  const lvl=pct>=86?'✅ เทคนิคดี':pct>=57?'⚠️ ต้องปรับปรุง':'🚨 เทคนิคไม่ถูกต้อง';
+  el.innerHTML=`คะแนน: <span style="color:${color};font-size:16px;">${score}/7</span> (${pct}%) — <span style="color:${color};">${lvl}</span>`;
+}
+function savePhTechnique(){
+  const hn=document.getElementById('ph-hn')?.value?.trim();
+  if(!hn){toast('กรุณากรอก HN ก่อน','e');return;}
+  const mdiActive=document.getElementById('ph-tech-dpi')?.style.display==='none';
+  const type=mdiActive?'mdi':'dpi';
+  const ids=type==='mdi'?['mdi1','mdi2','mdi3','mdi4','mdi5','mdi6','mdi7']:['dpi1','dpi2','dpi3','dpi4','dpi5','dpi6','dpi7'];
+  const steps=ids.map(id=>({id,ok:!!document.getElementById(id)?.checked}));
+  const score=steps.filter(s=>s.ok).length;
+  const note=document.getElementById('ph-tech-note')?.value||'';
+  const v=DB.visits.filter(x=>x.hn===hn).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))[0];
+  if(v){
+    v.techAssessment={type,steps,score,note,date:today(),by:'pharmacist'};
+    saveDB();
+  }
+  toast(`บันทึกผลพ่นยา ${score}/7 เรียบร้อย`);
+}
+function phAddReturn(){
+  const drugId=document.getElementById('ph-return-drug')?.value;
+  const qty=+(document.getElementById('ph-return-qty')?.value||1);
+  if(!drugId){toast('กรุณาเลือกยา','e');return;}
+  const drug=DB.drugs.find(d=>d.id===drugId);
+  _phReturns.push({drugId,drugName:drug?.name||drugId,qty});
+  renderPhReturnListModal();
+}
+function renderPhReturnList(){renderPhReturnListModal();}
+function savePhReturns(){
+  const hn=document.getElementById('ph-hn')?.value?.trim();
+  if(!hn){toast('กรุณากรอก HN ก่อน','e');return;}
+  const v=DB.visits.filter(x=>x.hn===hn).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))[0];
+  if(v){
+    v.returnedInhalers=_phReturns.slice();
+    saveDB();
+  }
+  toast('บันทึกยาคืนเรียบร้อย');
+}
 function phFillName(){
   const hn=(document.getElementById('ph-hn')||{}).value?.trim();
+  if(!hn)return;
+  // Search patients first, then visits
   const p=DB.patients.find(x=>x.hn===hn);
-  if(p&&document.getElementById('ph-name'))document.getElementById('ph-name').value=p.name;
-  if(hn){
-    const last=DB.dispensing.filter(d=>d.hn===hn).sort((a,b)=>new Date(b.date)-new Date(a.date));
-    const list=document.getElementById('ph-drug-list');
-    if(list&&!list.children.length&&last.length) addPhDrugFromHistory(last[0]);
+  const lastVisit=DB.visits.filter(v=>v.hn===hn).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))[0];
+  const name=p?.name||lastVisit?.name||'';
+  const nameEl=document.getElementById('ph-name');
+  if(name&&nameEl&&!nameEl.value)nameEl.value=name;
+  // Auto-fill current drugs from patient record
+  const list=document.getElementById('ph-drug-list');
+  if(list&&!list.children.length){
+    const currentDrugs=p?.currentDrugs||lastVisit?.currentDrugs;
+    const lastDisp=DB.dispensing.filter(d=>d.hn===hn).sort((a,b)=>new Date(b.date)-new Date(a.date))[0];
+    if(currentDrugs&&currentDrugs.length){
+      currentDrugs.forEach(cd=>{
+        const drug=DB.drugs.find(d=>d.id===cd.drugId||d.name===cd.drugName||d.name===cd.drug);
+        if(drug) addPhDrugRow(drug.id,cd.dose||2,cd.freq||2);
+      });
+    }else if(lastDisp){
+      addPhDrugFromHistory(lastDisp);
+    }
+  }
+  // Show patient's current drugs info banner
+  if(p?.currentDrugs?.length){
+    const banner=document.getElementById('ph-rescue-banner');
+    if(banner){
+      const reliev=p.currentDrugs.filter(d=>guessDrugCat(d.drugName||d.drug||'')!=='controller');
+      const ctrl=p.currentDrugs.filter(d=>guessDrugCat(d.drugName||d.drug||'')==='controller');
+      const extra=`<div style="background:#e8f5e9;border-radius:7px;padding:8px 12px;font-size:12px;margin-bottom:8px;">
+        <b>💊 ยาปัจจุบันจากฐานข้อมูล:</b><br>
+        ${reliev.length?`🔴 Reliever: ${reliev.map(d=>d.drugName||d.drug||d.drugId).join(', ')}<br>`:''}
+        ${ctrl.length?`🔵 Controller: ${ctrl.map(d=>d.drugName||d.drug||d.drugId).join(', ')}`:''}
+      </div>`;
+      banner.innerHTML=extra+(banner.innerHTML||'');
+    }
   }
 }
 // lastExpEmpty per drugId stored in disp.drugs[].lastEmptyDate
@@ -1181,7 +1887,7 @@ function addPhDrug(prefill){
   div.innerHTML=`
   <div style="border:1.5px solid ${isRescueDef?'#ffcdd2':'#c8dff5'};border-radius:8px;padding:13px;margin-bottom:10px;background:${isRescueDef?'#fff8f8':'#f8fbff'};" id="${id}-wrap">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-      <strong style="color:${isRescueDef?'#c62828':'var(--pd)'};" id="${id}-title">${isRescueDef?'🚨 ยาพ่นฉุกเฉิน':'💊 ยาพ่น'}</strong>
+      <strong style="color:${isRescueDef?'#c62828':'var(--pd)'};" id="${id}-title">${isRescueDef?'💨 ยาพ่น Reliever':'💊 ยาพ่น'}</strong>
       <button class="btn bd2 bsm" onclick="document.getElementById('${id}').remove();calcAll()">✕</button>
     </div>
     <div class="fgrid" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
@@ -1229,7 +1935,7 @@ function onDrugChange(id){
   const wrap=document.getElementById(id+'-wrap');
   if(wrap){wrap.style.borderColor=isR?'#ffcdd2':'#c8dff5';wrap.style.background=isR?'#fff8f8':'#f8fbff';}
   const title=document.getElementById(id+'-title');
-  if(title){title.textContent=isR?'🚨 ยาพ่นฉุกเฉิน':'💊 ยาพ่น';title.style.color=isR?'#c62828':'var(--pd)';}
+  if(title){title.textContent=isR?'💨 ยาพ่น Reliever':'💊 ยาพ่น';title.style.color=isR?'#c62828':'var(--pd)';}
   const freqW=document.getElementById(id+'-freq-wrap');
   const prnW=document.getElementById(id+'-prn-wrap');
   const qtyW=document.getElementById(id+'-qty-wrap');
@@ -1476,25 +2182,29 @@ function doPrint(type,hn,name,nextAppt){
       @page{size:70mm 50mm;margin:0;}
       *{box-sizing:border-box;}
       body{margin:0;padding:2mm;font-family:Arial,Helvetica,sans-serif;background:#fff;}
-      .stk{width:66mm;min-height:46mm;border-radius:2mm;overflow:hidden;display:inline-block;vertical-align:top;margin:0 2mm 3mm 0;page-break-inside:avoid;}
+      .no-print{text-align:center;padding:4mm;}
+      @media print{.no-print{display:none;}}
+      .stk{width:66mm;min-height:46mm;border-radius:2mm;overflow:hidden;display:block;margin:0 auto 4mm;page-break-inside:avoid;page-break-after:always;}
       .stk-rescue{border:1.5px solid #c62828;}
       .stk-ctrl{border:1.5px solid #1565c0;}
-      .stk-hd{padding:1.2mm 2.5mm;font-size:7pt;font-weight:800;display:flex;justify-content:space-between;align-items:center;}
+      .stk-hd{padding:1.5mm 3mm;font-size:8pt;font-weight:800;display:flex;justify-content:space-between;align-items:center;}
       .stk-rescue .stk-hd{background:#c62828;color:#fff;}
       .stk-ctrl .stk-hd{background:#1565c0;color:#fff;}
       .stk-body{padding:1.5mm 2.5mm;}
-      .stk-drug{font-size:7.5pt;font-weight:800;margin-bottom:0.8mm;line-height:1.2;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+      .stk-drug{font-size:9pt;font-weight:800;margin-bottom:0.8mm;line-height:1.2;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
       .stk-rescue .stk-drug{color:#b71c1c;}
       .stk-ctrl .stk-drug{color:#0d47a1;}
-      .stk-sub{font-size:6pt;color:#444;margin-bottom:0.5mm;font-weight:700;}
-      .stk-row{font-size:6.2pt;color:#333;margin-bottom:0.8mm;line-height:1.3;}
+      .stk-sub{font-size:7pt;color:#444;margin-bottom:0.5mm;font-weight:700;}
+      .stk-row{font-size:7pt;color:#333;margin-bottom:0.8mm;line-height:1.3;}
       .stk-row b{color:#000;}
       .stk-divider{border:none;border-top:0.5px solid #ddd;margin:1mm 0;}
       .grid{display:grid;grid-template-columns:repeat(5,1fr);gap:0.8mm;margin:1.5mm 0;}
-      .cell{border:1px solid #e57373;height:8mm;position:relative;font-size:5pt;color:#c62828;display:flex;align-items:flex-end;justify-content:flex-end;padding:0.5mm;background:#fff;}
-      .cell-n{font-size:5pt;color:#aaa;position:absolute;top:0.5mm;left:0.5mm;}
-      .stk-foot{font-size:5.5pt;color:#666;border-top:0.5px solid #ddd;padding:1mm 2.5mm;display:flex;justify-content:space-between;}
+      .cell{border:1px solid #e57373;height:8mm;position:relative;font-size:6pt;color:#c62828;display:flex;align-items:flex-end;justify-content:flex-end;padding:0.5mm;background:#fff;}
+      .cell-n{font-size:5.5pt;color:#aaa;position:absolute;top:0.5mm;left:0.5mm;}
+      .stk-foot{font-size:6.5pt;color:#666;border-top:0.5px solid #ddd;padding:1mm 2.5mm;display:flex;justify-content:space-between;}
       .stk-ctrl .stk-foot{color:#555;}
+      .stk-qr{width:12mm;height:12mm;display:block;flex-shrink:0;border:0.5px solid #ddd;border-radius:1mm;}
+      .stk-foot-left{display:flex;flex-direction:column;justify-content:center;gap:0.5mm;flex:1;}
     `;
     const stkHtml=cans.map(c=>{
       const dname=c.drug||c.drugName||'';
@@ -1510,7 +2220,7 @@ function doPrint(type,hn,name,nextAppt){
           return `<div class="cell"><span class="cell-n">${i+1}</span><span>${cumPuffs}</span></div>`;
         }).join('');
         return `<div class="stk stk-rescue">
-          <div class="stk-hd"><span>🚨 ยาพ่นฉุกเฉิน</span><span>HN: ${hn}</span></div>
+          <div class="stk-hd"><span>💨 ยาพ่น Reliever</span><span>HN: ${hn}</span></div>
           <div class="stk-body">
             <div class="stk-drug">${dname}</div>
             <div class="stk-sub">${c.num||''}${c.num&&!c.isOld?' (ใหม่)':c.isOld?' (เดิม)':''}</div>
@@ -1520,9 +2230,12 @@ function doPrint(type,hn,name,nextAppt){
             <div style="font-size:5.5pt;color:#c62828;margin-bottom:1mm;font-weight:700;">✏️ กาทีละช่อง · 1 ช่อง = ${c.dose||2} puffs</div>
             <div class="grid">${boxes}</div>
           </div>
-          <div class="stk-foot">
-            <span>หมดสติ๊กเกอร์ (${puffsPerSticker} puffs) → ปริ้นต์ใหม่</span>
-            <span>หมด: ${fmtShort(c.end)}</span>
+          <div class="stk-foot" style="align-items:center;gap:1.5mm;">
+            <div class="stk-foot-left">
+              <span>หมดสติ๊กเกอร์ (${puffsPerSticker} puffs) → ปริ้นต์ใหม่</span>
+              <span>หมด: ${fmtShort(c.end)}</span>
+            </div>
+            <img class="stk-qr" src="https://api.qrserver.com/v1/create-qr-code/?size=100x100&margin=2&data=HN:${encodeURIComponent(hn)}" alt="QR">
           </div>
         </div>`;
       } else {
@@ -1542,16 +2255,20 @@ function doPrint(type,hn,name,nextAppt){
             <div class="stk-row">🏁 <b>ยาหมด:</b> ${fmtShort(c.end)}${daysSupply?` (${daysSupply} วัน)`:''}</div>
             ${nextAppt?`<div class="stk-row">🗓 <b>วันนัด:</b> ${fmtShort(nextAppt)}</div>`:''}
           </div>
-          <div class="stk-foot">
-            <span>จ่ายยา: ${fmtShort(new Date())}</span>
-            <span>พ่น ${c.dose||2}×${c.freq||2}/วัน = ${(c.dose||2)*(c.freq||2)} puffs/วัน</span>
+          <div class="stk-foot" style="align-items:center;gap:1.5mm;">
+            <div class="stk-foot-left">
+              <span>จ่ายยา: ${fmtShort(new Date())}</span>
+              <span>พ่น ${c.dose||2}×${c.freq||2}/วัน = ${(c.dose||2)*(c.freq||2)} puffs/วัน</span>
+            </div>
+            <img class="stk-qr" src="https://api.qrserver.com/v1/create-qr-code/?size=100x100&margin=2&data=HN:${encodeURIComponent(hn)}" alt="QR">
           </div>
         </div>`;
       }
     }).join('');
     w.document.write(`<html><head><meta charset="UTF-8"><style>${stickerCSS}</style></head><body>
     ${stkHtml}
-    <script>window.onload=()=>window.print()<\/script></body></html>`);
+    <div class="no-print"><button onclick="window.print()" style="background:#1565c0;color:#fff;border:none;border-radius:8px;padding:10px 28px;font-size:14px;font-weight:700;cursor:pointer;margin-top:4mm;">🖨️ สั่งพิมพ์สติ๊กเกอร์</button><p style="font-size:11px;color:#888;margin-top:4px;">ตรวจสอบว่าตั้ง Paper Size = 50×70mm ในหน้าต่างพิมพ์</p></div>
+    </body></html>`);
   }
 }
 
@@ -1591,20 +2308,20 @@ function rePrintDisp(id){
     @page{size:70mm 50mm;margin:0;}
     *{box-sizing:border-box;}
     body{margin:0;padding:2mm;font-family:Arial,Helvetica,sans-serif;background:#fff;}
-    .stk{width:66mm;min-height:46mm;border-radius:2mm;overflow:hidden;display:inline-block;vertical-align:top;margin:0 2mm 3mm 0;page-break-inside:avoid;}
+    .stk{width:66mm;min-height:46mm;border-radius:2mm;overflow:hidden;display:block;margin:0 auto 4mm;page-break-inside:avoid;page-break-after:always;}
     .stk-rescue{border:1.5px solid #c62828;}.stk-ctrl{border:1.5px solid #1565c0;}
-    .stk-hd{padding:1.2mm 2.5mm;font-size:7pt;font-weight:800;display:flex;justify-content:space-between;align-items:center;}
+    .stk-hd{padding:1.5mm 3mm;font-size:8pt;font-weight:800;display:flex;justify-content:space-between;align-items:center;}
     .stk-rescue .stk-hd{background:#c62828;color:#fff;}.stk-ctrl .stk-hd{background:#1565c0;color:#fff;}
     .stk-body{padding:1.5mm 2.5mm;}
-    .stk-drug{font-size:7.5pt;font-weight:800;margin-bottom:0.8mm;line-height:1.2;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
+    .stk-drug{font-size:9pt;font-weight:800;margin-bottom:0.8mm;line-height:1.2;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
     .stk-rescue .stk-drug{color:#b71c1c;}.stk-ctrl .stk-drug{color:#0d47a1;}
-    .stk-sub{font-size:6pt;color:#444;margin-bottom:0.5mm;font-weight:700;}
-    .stk-row{font-size:6.2pt;color:#333;margin-bottom:0.8mm;line-height:1.3;}.stk-row b{color:#000;}
+    .stk-sub{font-size:7pt;color:#444;margin-bottom:0.5mm;font-weight:700;}
+    .stk-row{font-size:7pt;color:#333;margin-bottom:0.8mm;line-height:1.3;}.stk-row b{color:#000;}
     .stk-divider{border:none;border-top:0.5px solid #ddd;margin:1mm 0;}
     .grid{display:grid;grid-template-columns:repeat(5,1fr);gap:0.8mm;margin:1.5mm 0;}
-    .cell{border:1px solid #e57373;height:8mm;position:relative;font-size:5pt;color:#c62828;display:flex;align-items:flex-end;justify-content:flex-end;padding:0.5mm;background:#fff;}
-    .cell-n{font-size:5pt;color:#aaa;position:absolute;top:0.5mm;left:0.5mm;}
-    .stk-foot{font-size:5.5pt;color:#666;border-top:0.5px solid #ddd;padding:1mm 2.5mm;display:flex;justify-content:space-between;}
+    .cell{border:1px solid #e57373;height:8mm;position:relative;font-size:6pt;color:#c62828;display:flex;align-items:flex-end;justify-content:flex-end;padding:0.5mm;background:#fff;}
+    .cell-n{font-size:5.5pt;color:#aaa;position:absolute;top:0.5mm;left:0.5mm;}
+    .stk-foot{font-size:6.5pt;color:#666;border-top:0.5px solid #ddd;padding:1mm 2.5mm;display:flex;justify-content:space-between;}
   `;
   const rescueKeywords=['salbutamol','ventolin','berodual','bricanyl','atrovent','ipratropium','saba'];
   function isR(name){const n=(name||'').toLowerCase();return rescueKeywords.some(k=>n.includes(k));}
@@ -1617,7 +2334,7 @@ function rePrintDisp(id){
     if(isRescue){
       const boxes=Array.from({length:20},(_,i)=>`<div class="cell"><span class="cell-n">${i+1}</span><span>${(i+1)*(c.dose||2)}</span></div>`).join('');
       return `<div class="stk stk-rescue">
-        <div class="stk-hd"><span>🚨 ยาพ่นฉุกเฉิน</span><span>HN: ${hn}</span></div>
+        <div class="stk-hd"><span>💨 ยาพ่น Reliever</span><span>HN: ${hn}</span></div>
         <div class="stk-body">
           <div class="stk-drug">${dname}</div>
           <div class="stk-sub">${c.num||''}${c.isOld?' (เดิม)':' (ใหม่)'}</div>
@@ -1943,8 +2660,6 @@ function confirmImport(){
 // ---- Public QR form ----
 function vRescueLogForm(hn){
   const p=DB.patients.find(x=>x.hn===hn);
-  const rescueDrugs=DB.drugs.filter(d=>d.cat==='rescue');
-  const drugOpts=rescueDrugs.map(d=>`<option value="${d.id}">${d.name}</option>`).join('');
   const patName=p?p.name:'';
   // Override whole page for public QR access
   document.body.innerHTML=`
@@ -1962,15 +2677,7 @@ function vRescueLogForm(hn){
         <label style="font-weight:600;display:block;margin-bottom:4px;">ชื่อ-สกุล</label>
         <div id="rl-name" style="padding:8px;background:#f5f5f5;border-radius:6px;font-size:14px;">${patName}</div>
       </div>
-      <div style="margin-bottom:14px;">
-        <label style="font-weight:600;display:block;margin-bottom:4px;">ยาพ่นที่ใช้</label>
-        <select id="rl-drug" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:14px;">
-          <option value="">-- เลือกยา --</option>
-          ${drugOpts}
-          <option value="__other">อื่นๆ (ระบุ)</option>
-        </select>
-        <input id="rl-drug-other" placeholder="ชื่อยา" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:14px;margin-top:6px;display:none;">
-      </div>
+      <!-- drug is fixed as ยาพ่นฉุกเฉิน -->
       <div style="margin-bottom:14px;">
         <label style="font-weight:600;display:block;margin-bottom:4px;">จำนวน Puffs ที่ใช้</label>
         <input type="number" id="rl-puffs" value="2" min="1" max="20" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:14px;">
@@ -2009,9 +2716,7 @@ function vRescueLogForm(hn){
   </div>`;
   // re-init sev selector
   rlSetSev(2);
-  document.getElementById('rl-drug').addEventListener('change',function(){
-    document.getElementById('rl-drug-other').style.display=this.value==='__other'?'block':'none';
-  });
+
 }
 
 function rlFillName(){
@@ -2039,8 +2744,6 @@ function rlSetSev(n){
 
 function submitRescueLog(){
   const hn=document.getElementById('rl-hn').value.trim();
-  const drugSel=document.getElementById('rl-drug').value;
-  const drugOther=document.getElementById('rl-drug-other').value.trim();
   const puffs=parseInt(document.getElementById('rl-puffs').value)||0;
   const reason=document.querySelector('input[name="rl-reason"]:checked')?.value||'prn';
   const sev=parseInt(document.getElementById('rl-sev').value)||2;
@@ -2048,16 +2751,14 @@ function submitRescueLog(){
   const errEl=document.getElementById('rl-err');
 
   if(!hn){errEl.textContent='กรุณาระบุ HN';errEl.style.display='block';return;}
-  if(!drugSel){errEl.textContent='กรุณาเลือกยาพ่น';errEl.style.display='block';return;}
   if(puffs<1){errEl.textContent='กรุณาระบุจำนวน Puffs';errEl.style.display='block';return;}
   errEl.style.display='none';
 
-  const d=DB.drugs.find(x=>x.id===drugSel);
-  const drugName=drugSel==='__other'?drugOther:(d?d.name:drugSel);
+  const drugName='ยาพ่นฉุกเฉิน';
   const p=DB.patients.find(x=>x.hn===hn);
 
   const entry={
-    id:uid(),hn,name:p?p.name:'',drugId:drugSel==='__other'?null:drugSel,
+    id:uid(),hn,name:p?p.name:'',drugId:null,
     drugName,puffs,reason,severity:sev,note,
     recordedAt:new Date().toISOString()
   };
@@ -2222,7 +2923,7 @@ function vRescueHistory(){
 
   <div id="rescue-qr-panel" class="mo" style="display:none;">
     <div class="mo-b" style="max-width:500px;">
-      <div class="mo-h"><span>📱 สร้าง QR Code ยาพ่นฉุกเฉิน</span><button class="mo-x" onclick="document.getElementById('rescue-qr-panel').style.display='none'">✕</button></div>
+      <div class="mh"><h3>📱 สร้าง QR Code ยาพ่นฉุกเฉิน</h3><button class="mx" onclick="closeModal('rescue-qr-panel')">×</button></div>
       <div style="padding:16px;">
         <div class="fgrid" style="margin-bottom:12px;">
           <div class="fg"><label>เลือกผู้ป่วย (HN)</label>
@@ -2236,7 +2937,7 @@ function vRescueHistory(){
     </div>
   </div>
   <div id="rescue-patient-modal" class="mo" style="display:none;">
-    <div class="mo-b" style="max-width:700px;"><div class="mo-h"><span id="rpm-title">ประวัติการใช้ยาฉุกเฉิน</span><button class="mo-x" onclick="document.getElementById('rescue-patient-modal').style.display='none'">✕</button></div>
+    <div class="mo-b" style="max-width:700px;"><div class="mh"><h3 id="rpm-title">📋 ประวัติการใช้ยาฉุกเฉิน</h3><button class="mx" onclick="closeModal('rescue-patient-modal')">×</button></div>
     <div id="rpm-body" style="padding:16px;max-height:70vh;overflow-y:auto;"></div></div>
   </div>
   `);
