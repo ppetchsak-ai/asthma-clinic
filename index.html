@@ -34,6 +34,9 @@ body{font-family:'Segoe UI',Tahoma,sans-serif;font-size:14px;background:var(--bg
 .tnav{padding:12px 18px;font-size:13px;font-weight:600;cursor:pointer;color:var(--tm);border-bottom:3px solid transparent;margin-bottom:-2px;white-space:nowrap;transition:.15s;}
 .tnav:hover{color:var(--p);}
 .tnav.on{color:var(--p);border-bottom-color:var(--p);}
+.tnav-r{color:#e65100 !important;}
+.tnav-r:hover{color:#bf360c !important;}
+.tnav-r.on{border-bottom-color:#e65100 !important;color:#bf360c !important;}
 /* ---- CONTENT ---- */
 #content{padding:20px;flex:1;}
 .view{display:none;}.view.on{display:block;}
@@ -772,10 +775,10 @@ function vGuide(){
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:10px;">
       ${[
         {r:'ผู้ป่วย / อสม.',ic:'🏠',p:'ไม่ต้องล็อกอิน',c:'#546e7a',note:'ประเมินอาการ + บันทึกยาฉุกเฉิน'},
-        {r:'พยาบาล',ic:'🩺',p:'nurse1234',c:'#00897b',note:'ยืนยันข้อมูล + ส่งต่อเภสัช'},
-        {r:'แพทย์',ic:'👨‍⚕️',p:'doctor1234',c:'#1565c0',note:'ดูสรุปผล (read-only)'},
-        {r:'เภสัชกร',ic:'💊',p:'pharm1234',c:'#6a1b9a',note:'จ่ายยา + ประเมินเทคนิค'},
-        {r:'Admin',ic:'⚙️',p:'admin1234',c:'#e65100',note:'จัดการระบบทั้งหมด'},
+        {r:'พยาบาล',ic:'🩺',p:'N1234',c:'#00897b',note:'ยืนยันข้อมูล + ส่งต่อเภสัช'},
+        {r:'แพทย์',ic:'👨‍⚕️',p:'D1234',c:'#1565c0',note:'ดูสรุปผล (read-only)'},
+        {r:'เภสัชกร',ic:'💊',p:'P1234',c:'#6a1b9a',note:'จ่ายยา + ประเมินเทคนิค'},
+        {r:'Admin',ic:'⚙️',p:'admin11091',c:'#e65100',note:'จัดการระบบทั้งหมด'},
       ].map(x=>`
       <div style="border-top:3px solid ${x.c};border-radius:8px;padding:12px;text-align:center;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.08);">
         <div style="font-size:1.8rem;">${x.ic}</div>
@@ -784,7 +787,10 @@ function vGuide(){
         <div style="font-size:.72rem;color:var(--tm);line-height:1.4;">${x.note}</div>
       </div>`).join('')}
     </div>
-    <div style="background:#e8f2fc;border-radius:6px;padding:8px 12px;margin-top:10px;font-size:12px;">💡 เปลี่ยนรหัสผ่านได้ใน <b>Admin → ตั้งค่า</b></div>
+    <div style="background:#e8f2fc;border-radius:6px;padding:8px 12px;margin-top:10px;font-size:12px;">
+      💡 <b>รหัสผ่านเริ่มต้น:</b> nurse=<code>N1234</code> · pharm=<code>P1234</code> · doctor=<code>D1234</code> · admin=<code>admin11091</code><br>
+      🔐 สร้างบัญชีผู้ใช้รายบุคคลและเปลี่ยนรหัสผ่านได้ใน <b>Admin → 👤 ผู้ใช้</b> หรือ <b>⚙️ ตั้งค่า</b>
+    </div>
   </div>
 
   <!-- Workflow -->
@@ -1034,10 +1040,11 @@ function showLogin(role){
   const titles={nurse:'พยาบาล',pharmacist:'เภสัชกร',admin:'Admin'};
   document.getElementById('login-title').textContent='เข้าสู่ระบบ – '+titles[role];
   document.getElementById('login-sub').textContent='กรอกรหัสผ่านสำหรับ'+titles[role];
+  document.getElementById('login-user').value='';
   document.getElementById('login-pw').value='';
   document.getElementById('login-err').style.display='none';
   document.getElementById('pg-login').classList.add('on');
-  setTimeout(()=>document.getElementById('login-pw').focus(),100);
+  setTimeout(()=>document.getElementById('login-user').focus(),100);
 }
 function closeLogin(){document.getElementById('pg-login').classList.remove('on');}
 async function doLogin(){
@@ -1148,7 +1155,6 @@ const NAVS = {
   admin:[
     {id:'dashboard',label:'📊 Dashboard',fn:'vDash'},
     {id:'patients',label:'👥 ผู้ป่วย',fn:'vPatients'},
-    {id:'useraccts',label:'👤 จัดการผู้ใช้',fn:'vUserAccounts'},
     {id:'auditlog',label:'📋 Audit Log',fn:'vAuditLog'},
     {id:'assess',label:'📋 แบบประเมิน',fn:'vAssess'},
     {id:'nqueue',label:'📥 คิวพยาบาล',fn:'vNurseQueue'},
@@ -1162,7 +1168,8 @@ const NAVS = {
     {id:'import',label:'📂 นำเข้า Excel',fn:'vImport'},
     {id:'pthistory',label:'📂 ประวัติ',fn:'vPatientHistory'},
     {id:'guide',label:'📖 คู่มือ',fn:'vGuide'},
-    {id:'settings',label:'⚙️ ตั้งค่า',fn:'vSettings'},
+    {id:'useraccts',label:'👤 ผู้ใช้',fn:'vUserAccounts',right:true},
+    {id:'settings',label:'⚙️ ตั้งค่า',fn:'vSettings',right:true},
   ]
 };
 
@@ -1170,7 +1177,13 @@ let activeNav='';
 function buildNav(role){
   const items=NAVS[role]||NAVS.public;
   const nav=document.getElementById('tabnav');
-  nav.innerHTML=items.map(n=>`<div class="tnav" id="tn-${n.id}" onclick="switchNav('${n.id}','${n.fn}')">${n.label}</div>`).join('');
+  let spacerAdded=false;
+  nav.innerHTML=items.map(n=>{
+    let pre='';
+    if(n.right&&!spacerAdded){pre='<div style="flex:1"></div><div style="width:1px;background:var(--bd);margin:8px 4px;"></div>';spacerAdded=true;}
+    const cls=n.right?'tnav tnav-r':'tnav';
+    return pre+`<div class="${cls}" id="tn-${n.id}" onclick="switchNav('${n.id}','${n.fn}')">${n.label}</div>`;
+  }).join('');
   switchNav(items[0].id,items[0].fn);
 }
 function switchNav(id,fn){
@@ -2326,12 +2339,7 @@ function openPhDisp(hn,vid){
   } else {
     const lastDisp=DB.dispensing.filter(d=>d.hn===hn).sort((a,b)=>new Date(b.date)-new Date(a.date));
     if(lastDisp.length) addPhDrugFromHistory(lastDisp[0]);
-    else {
-      // Auto-load all DB drugs for this patient (rescue + controller)
-      const ptDrugs=getPatientDrugs(hn);
-      if(ptDrugs.length) ptDrugs.forEach(d=>addPhDrug(d));
-      else addPhDrug();
-    }
+    else addPhDrug(); // new patient → one blank row only
   }
 }
 function getPatientDrugs(hn){
@@ -2462,18 +2470,20 @@ function phFillName(){
       addPhDrugFromHistory(lastDisp);
     }
   }
-  // Show patient's current drugs info banner
-  if(p?.currentDrugs?.length){
+  // Show patient's reliever/controller info banner
+  if(p){
     const banner=document.getElementById('ph-rescue-banner');
     if(banner){
-      const reliev=p.currentDrugs.filter(d=>guessDrugCat(d.drugName||d.drug||'')!=='controller');
-      const ctrl=p.currentDrugs.filter(d=>guessDrugCat(d.drugName||d.drug||'')==='controller');
-      const extra=`<div style="background:#e8f5e9;border-radius:7px;padding:8px 12px;font-size:12px;margin-bottom:8px;">
-        <b>💊 ยาปัจจุบันจากฐานข้อมูล:</b><br>
-        ${reliev.length?`🔴 Reliever: ${reliev.map(d=>d.drugName||d.drug||d.drugId).join(', ')}<br>`:''}
-        ${ctrl.length?`🔵 Controller: ${ctrl.map(d=>d.drugName||d.drug||d.drugId).join(', ')}`:''}
-      </div>`;
-      banner.innerHTML=extra+(banner.innerHTML||'');
+      const rel=p.reliever||'';
+      const ctrl=p.controller||'';
+      if(rel||ctrl){
+        const extra=`<div style="background:#e8f5e9;border:1px solid #a5d6a7;border-radius:7px;padding:9px 13px;font-size:12.5px;margin-bottom:8px;">
+          <b>💊 ยาของผู้ป่วย (จากทะเบียน):</b>
+          ${rel?`<div style="margin-top:4px;">💨 <b>Reliever:</b> ${rel}</div>`:''}
+          ${ctrl?`<div style="margin-top:3px;">🔵 <b>Controller:</b> ${ctrl}</div>`:''}
+        </div>`;
+        banner.innerHTML=(banner.innerHTML||'')+extra;
+      }
     }
   }
 }
@@ -4017,6 +4027,8 @@ function vPatients(){
       <div class="fg"><label>เพศ</label><select id="pt-sex"><option>ชาย</option><option>หญิง</option></select></div>
       <div class="fg"><label>เบอร์โทร</label><input id="pt-phone"></div>
       <div class="fg"><label>การวินิจฉัย</label><select id="pt-dx"><option value="Asthma">Asthma</option><option value="COPD">COPD</option><option value="Asthma+COPD">ACO</option></select></div>
+      <div class="fg" style="grid-column:1/-1"><label>💨 Reliever ที่ใช้</label><input id="pt-reliever" placeholder="เช่น Salbutamol MDI, Ipratropium"></div>
+      <div class="fg" style="grid-column:1/-1"><label>🔵 Controller ที่ใช้</label><input id="pt-controller" placeholder="เช่น ICS/LABA, Tiotropium"></div>
     </div></div>
     <div class="mf"><button class="btn bgray" onclick="document.getElementById('pt-modal').classList.remove('on')">ยกเลิก</button><button class="btn bs" onclick="addPt()">✅ บันทึก</button></div>
     </div>
@@ -4027,7 +4039,8 @@ function renderPtTable(pts){
   return`<table><thead><tr><th>HN</th><th>ชื่อ-สกุล</th><th>อายุ</th><th>โรค</th><th>Visit ล่าสุด</th><th>Action</th></tr></thead><tbody>
   ${pts.map(p=>{const lv=DB.visits.filter(v=>v.hn===p.hn).sort((a,b)=>new Date(b.date||b.createdAt)-new Date(a.date||a.createdAt))[0];
     const age=p.dob?Math.floor((Date.now()-new Date(p.dob))/(365.25*86400000)):'–';
-    return`<tr><td><strong>${p.hn}</strong></td><td>${p.name}</td><td>${age}</td>
+    const relText=(p.reliever||p.controller)?`<div style="font-size:11px;color:var(--tm);margin-top:2px;">${p.reliever?'💨'+p.reliever:''}${p.reliever&&p.controller?' / ':''}${p.controller?'🔵'+p.controller:''}</div>`:'';
+    return`<tr><td><strong>${p.hn}</strong></td><td>${p.name}${relText}</td><td>${age}</td>
     <td><span class="pill pb">${p.dx||'–'}</span></td><td>${lv?fmt(lv.date||lv.createdAt):'ยังไม่มี'}</td>
     <td><button class="btn bp bsm" onclick="openPhDisp('${p.hn}','')">💊 จ่ายยา</button></td></tr>`;}).join('')}
   </tbody></table>`;
@@ -4093,7 +4106,7 @@ function addPt(){
   const hn=document.getElementById('pt-hn').value.trim();const name=document.getElementById('pt-name').value.trim();
   if(!hn||!name){toast('กรุณากรอก HN และชื่อ','e');return;}
   if(DB.patients.find(p=>p.hn===hn)){toast('HN นี้มีอยู่แล้ว','e');return;}
-  DB.patients.push({id:uid(),hn,name,dob:document.getElementById('pt-dob').value,gender:document.getElementById('pt-sex').value,phone:document.getElementById('pt-phone').value,dx:document.getElementById('pt-dx').value,createdAt:new Date().toISOString()});
+  DB.patients.push({id:uid(),hn,name,dob:document.getElementById('pt-dob').value,gender:document.getElementById('pt-sex').value,phone:document.getElementById('pt-phone').value,dx:document.getElementById('pt-dx').value,reliever:document.getElementById('pt-reliever').value.trim(),controller:document.getElementById('pt-controller').value.trim(),createdAt:new Date().toISOString()});
   saveDB();document.getElementById('pt-modal').classList.remove('on');
   document.getElementById('pt-body').innerHTML=renderPtTable(DB.patients);toast('เพิ่มผู้ป่วยแล้ว ✅');
 }
@@ -4116,7 +4129,7 @@ function vSettings(){
     <div class="al ald"><span>⚠️</span><span>การรีเซ็ตจะลบข้อมูลทั้งหมดออกจาก browser นี้</span></div>
     <button class="btn bd2" onclick="if(confirm('ยืนยันลบข้อมูลทั้งหมด?')){localStorage.removeItem('${SK}');location.reload();}">🗑️ รีเซ็ตข้อมูลทั้งหมด</button>
     <hr style="margin:20px 0;">
-    <p style="color:var(--tm);font-size:12px;">รหัสผ่านเริ่มต้น: nurse=<code>nurse1234</code> | pharm=<code>pharm1234</code> | doctor=<code>doctor1234</code> | admin=<code>admin1234</code></p>
+    <p style="color:var(--tm);font-size:12px;">รหัสผ่านเริ่มต้น: nurse=<code>N1234</code> | pharm=<code>P1234</code> | doctor=<code>D1234</code> | admin=<code>admin11091</code></p>
   </div>`);
 }
 function saveSettings(){
