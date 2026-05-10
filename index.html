@@ -149,6 +149,15 @@ tr:hover td{background:#f8fbff;}
 #toast{position:fixed;bottom:20px;right:20px;padding:11px 18px;border-radius:8px;font-size:13px;z-index:500;display:none;box-shadow:0 4px 16px rgba(0,0,0,.25);color:#fff;max-width:280px;}
 /* ---- RESPONSIVE ---- */
 @media(max-width:600px){.fgrid{grid-template-columns:1fr;}.sgrid{grid-template-columns:1fr 1fr;}}
+
+/* ── HN autocomplete suggest ── */
+.hn-swrap{position:relative;display:block;}
+.hn-suggest{position:absolute;left:0;top:100%;z-index:9999;background:#fff;border:1.5px solid #1976d2;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);max-height:230px;overflow-y:auto;min-width:100%;margin-top:2px;font-size:13px;}
+.hn-suggest .si{padding:8px 13px;cursor:pointer;border-bottom:1px solid #f0f0f0;display:flex;gap:10px;align-items:center;}
+.hn-suggest .si:last-child{border-bottom:none;}
+.hn-suggest .si:hover,.hn-suggest .si.sih{background:#e3f0ff;}
+.hn-suggest .si-hn{font-weight:700;color:#1565c0;min-width:58px;white-space:nowrap;}
+.hn-suggest .si-nm{color:#333;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 </style>
 </head>
 <body>
@@ -191,9 +200,12 @@ tr:hover td{background:#f8fbff;}
 <div id="pg-login">
   <div class="login-box">
     <h2 id="login-title">เข้าสู่ระบบ</h2>
-    <p id="login-sub">กรอกรหัสผ่านเพื่อเข้าใช้งาน</p>
+    <p id="login-sub">กรอกชื่อผู้ใช้และรหัสผ่าน</p>
+    <div class="fg"><label>ชื่อผู้ใช้ (Username)</label>
+      <input type="text" id="login-user" placeholder="ชื่อผู้ใช้" autocomplete="username" onkeydown="if(event.key==='Enter')document.getElementById('login-pw').focus()">
+    </div>
     <div class="fg"><label>รหัสผ่าน</label>
-      <input type="password" id="login-pw" placeholder="รหัสผ่าน" onkeydown="if(event.key==='Enter')doLogin()">
+      <input type="password" id="login-pw" placeholder="รหัสผ่าน" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
     </div>
     <div id="login-err" class="al ald" style="display:none"><span>❌</span><span>รหัสผ่านไม่ถูกต้อง</span></div>
     <div style="display:flex;gap:8px;margin-top:4px;">
@@ -224,10 +236,139 @@ tr:hover td{background:#f8fbff;}
 <div id="toast"></div>
 
 <script>
+// ==================== SECURITY ====================
+// 1) SHA-256 hashing
+async function sha256hex(str){
+  const buf=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
+}
+async function migratePasswords(){
+  const defaults={nurse:'N1234',pharmacist:'P1234',admin:'admin11091',doctor:'D1234'};
+  // pwVersion<2 → force reset ALL role passwords to new defaults
+  if((DB.pwVersion||0)<2){
+    for(const [role,plain] of Object.entries(defaults)){
+      DB.users[role]=await sha256hex(plain);
+    }
+    DB.pwVersion=2;saveDB();return;
+  }
+  // hash any remaining plaintext
+  let changed=false;
+  for(const [role,plain] of Object.entries(defaults)){
+    if((DB.users[role]||'').length<40){DB.users[role]=await sha256hex(plain);changed=true;}
+  }
+  if(changed)saveDB();
+}
+// 2) Brute-force lockout
+const _loginAttempts={};
+const MAX_ATTEMPTS=5,LOCK_MS=5*60*1000;
+function checkLocked(role){
+  const a=_loginAttempts[role];if(!a)return false;
+  if(a.count>=MAX_ATTEMPTS){const rem=Math.ceil((a.lockUntil-Date.now())/1000);if(rem>0)return rem;delete _loginAttempts[role];}
+  return false;
+}
+function recordFail(role){
+  if(!_loginAttempts[role])_loginAttempts[role]={count:0,lockUntil:0};
+  _loginAttempts[role].count++;
+  if(_loginAttempts[role].count>=MAX_ATTEMPTS)_loginAttempts[role].lockUntil=Date.now()+LOCK_MS;
+}
+function resetAttempts(role){delete _loginAttempts[role];}
+
+// ── AUDIT LOG ──────────────────────────────────────────────────────────
+function auditLog(action,userId,userName,detail){
+  if(!DB.auditLog)DB.auditLog=[];
+  DB.auditLog.unshift({id:uid(),ts:new Date().toISOString(),
+    userId:userId||SESSION.userId||'?',
+    userName:userName||SESSION.userName||'?',
+    role:SESSION.role||'?',action,detail:detail||''});
+  if(DB.auditLog.length>2000)DB.auditLog=DB.auditLog.slice(0,2000);
+  saveDB();
+}
+function alog(action,detail){auditLog(action,SESSION.userId,SESSION.userName,detail);}
+// ===== INLINE QR CODE GENERATOR (qrcode-generator MIT by kazuhikoarase, compacted) =====
+(function(g){
+var qrcode=function(typeNumber,ecLevel){
+var PAD0=0xEC,PAD1=0x11;
+var _tn=typeNumber,_ecl=QRErrorCorrectionLevel[ecLevel],_mod=null,_mc=0,_dc=null,_dl=[];
+var _this={};
+function makeImpl(test,mp){
+  _mc=_tn*4+17;_mod=[];for(var i=0;i<_mc;i++){_mod.push([]);for(var j=0;j<_mc;j++)_mod[i].push(null);}
+  probe(0,0);probe(_mc-7,0);probe(0,_mc-7);adjPat();timePat();typeInfo(test,mp);
+  if(_tn>=7)typeNum(test);if(_dc==null)_dc=createData(_tn,_ecl,_dl);mapData(_dc,mp);}
+function probe(row,col){for(var r=-1;r<=7;r++){if(row+r<=-1||_mc<=row+r)continue;for(var c=-1;c<=7;c++){if(col+c<=-1||_mc<=col+c)continue;_mod[row+r][col+c]=(0<=r&&r<=6&&(c==0||c==6))||(0<=c&&c<=6&&(r==0||r==6))||(2<=r&&r<=4&&2<=c&&c<=4);}}}
+function bestMask(){var min=0,pat=0;for(var i=0;i<8;i++){makeImpl(true,i);var lp=lostPoint();if(i==0||min>lp){min=lp;pat=i;}}return pat;}
+function timePat(){for(var r=8;r<_mc-8;r++)if(_mod[r][6]==null)_mod[r][6]=(r%2==0);for(var c=8;c<_mc-8;c++)if(_mod[6][c]==null)_mod[6][c]=(c%2==0);}
+function adjPat(){var pos=PPT[_tn-1];for(var i=0;i<pos.length;i++)for(var j=0;j<pos.length;j++){var row=pos[i],col=pos[j];if(_mod[row][col]!=null)continue;for(var r=-2;r<=2;r++)for(var c=-2;c<=2;c++)_mod[row+r][col+c]=(r==-2||r==2||c==-2||c==2||(r==0&&c==0));}}
+function typeNum(test){var bits=getBCHTN(_tn);for(var i=0;i<18;i++){_mod[Math.floor(i/3)][i%3+_mc-8-3]=(!test&&((bits>>i)&1)==1);}for(var i=0;i<18;i++){_mod[i%3+_mc-8-3][Math.floor(i/3)]=(!test&&((bits>>i)&1)==1);}}
+function typeInfo(test,mp){var d=(_ecl<<3)|mp,bits=getBCHTI(d);for(var i=0;i<15;i++){var m=(!test&&((bits>>i)&1)==1);if(i<6)_mod[i][8]=m;else if(i<8)_mod[i+1][8]=m;else _mod[_mc-15+i][8]=m;}for(var i=0;i<15;i++){var m=(!test&&((bits>>i)&1)==1);if(i<8)_mod[8][_mc-i-1]=m;else if(i<9)_mod[8][15-i-1+1]=m;else _mod[8][15-i-1]=m;}_mod[_mc-8][8]=(!test);}
+function mapData(data,mp){var inc=-1,row=_mc-1,bi=7,by=0;var mf=getMF(mp);
+  for(var col=_mc-1;col>0;col-=2){if(col==6)col--;while(true){for(var c=0;c<2;c++){if(_mod[row][col-c]==null){var dark=by<data.length&&((data[by]>>bi)&1)==1;if(mf(row,col-c))dark=!dark;_mod[row][col-c]=dark;bi--;if(bi==-1){by++;bi=7;}}}row+=inc;if(row<0||_mc<=row){row-=inc;inc=-inc;break;}}}}
+function lostPoint(){var n=_mc,lp=0;
+  for(var r=0;r<n;r++)for(var c=0;c<n;c++){var s=0,dk=_mod[r][c];for(var dr=-1;dr<=1;dr++)for(var dc=-1;dc<=1;dc++){if(r+dr<0||n<=r+dr||c+dc<0||n<=c+dc)continue;if(dr==0&&dc==0)continue;if(dk===_mod[r+dr][c+dc])s++;}if(s>5)lp+=s-2;}
+  for(var r=0;r<n-1;r++)for(var c=0;c<n-1;c++){var cnt=0;if(_mod[r][c])cnt++;if(_mod[r+1][c])cnt++;if(_mod[r][c+1])cnt++;if(_mod[r+1][c+1])cnt++;if(cnt==0||cnt==4)lp+=3;}
+  for(var r=0;r<n;r++)for(var c=0;c<n-6;c++){if(_mod[r][c]&&!_mod[r][c+1]&&_mod[r][c+2]&&_mod[r][c+3]&&_mod[r][c+4]&&!_mod[r][c+5]&&_mod[r][c+6])lp+=40;}
+  for(var c=0;c<n;c++)for(var r=0;r<n-6;r++){if(_mod[r][c]&&!_mod[r+1][c]&&_mod[r+2][c]&&_mod[r+3][c]&&_mod[r+4][c]&&!_mod[r+5][c]&&_mod[r+6][c])lp+=40;}
+  var dk=0;for(var c=0;c<n;c++)for(var r=0;r<n;r++)if(_mod[r][c])dk++;lp+=Math.abs(100*dk/n/n-50)/5*10;return lp;}
+_this.addData=function(data){var b=[];for(var i=0;i<data.length;i++)b.push(data.charCodeAt(i)&0xff);
+  _dl.push({getMode:function(){return 4;},getLength:function(){return b.length;},write:function(buf){for(var i=0;i<b.length;i++)buf.put(b[i],8);}});_dc=null;};
+_this.isDark=function(r,c){return _mod[r][c];};
+_this.getModuleCount=function(){return _mc;};
+_this.make=function(){
+  if(_tn<1){var t=1;for(;t<40;t++){var rsb=getRSB(t,_ecl),tdc=0;for(var i=0;i<rsb.length;i++)tdc+=rsb[i].dc;var bl=mkBuf();for(var i=0;i<_dl.length;i++){var d=_dl[i];bl.put(d.getMode(),4);bl.put(d.getLength(),getLenBits(4,t));d.write(bl);}if(bl.len()<=tdc*8)break;}_tn=t;}
+  makeImpl(false,bestMask());};
+_this.toSVG=function(cs,mg){cs=cs||2;mg=(mg!=null?mg:cs*4);var sz=_mc*cs+mg*2;var s='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 '+sz+' '+sz+'"><rect width="'+sz+'" height="'+sz+'" fill="#fff"/>';for(var r=0;r<_mc;r++)for(var c=0;c<_mc;c++)if(_mod[r][c])s+='<rect x="'+(c*cs+mg)+'" y="'+(r*cs+mg)+'" width="'+cs+'" height="'+cs+'" fill="#000"/>';return s+'</svg>';};
+return _this;};
+// --- Helpers ---
+var PPT=[[],[6,18],[6,22],[6,26],[6,30],[6,34],[6,22,38],[6,24,42],[6,26,46],[6,28,50],[6,30,54],[6,32,58],[6,34,62],[6,26,46,66],[6,26,48,70],[6,26,50,74],[6,30,54,78],[6,30,56,82],[6,30,58,86],[6,34,62,90],[6,28,50,72,94],[6,26,50,74,98],[6,30,54,78,102],[6,28,54,80,106],[6,32,58,84,110],[6,30,58,86,114],[6,34,62,90,118],[6,26,50,74,98,122],[6,30,54,78,102,126],[6,26,52,78,104,130],[6,30,56,82,108,134],[6,34,60,86,112,138],[6,30,58,86,114,142],[6,34,62,90,118,146],[6,30,54,78,102,126,150],[6,24,50,76,102,128,154],[6,28,54,80,106,132,158],[6,32,58,84,110,136,162],[6,26,54,82,110,138,166],[6,30,58,86,114,142,170]];
+var QRErrorCorrectionLevel={L:1,M:0,Q:3,H:2};
+function getBCHTI(d){var g=(1<<10)|(1<<8)|(1<<5)|(1<<4)|(1<<2)|(1<<1)|1,dd=d<<10;while(bchd(dd)-bchd(g)>=0)dd^=g<<(bchd(dd)-bchd(g));return((d<<10)|dd)^((1<<14)|(1<<12)|(1<<10)|(1<<4)|(1<<1));}
+function getBCHTN(d){var g=(1<<12)|(1<<11)|(1<<10)|(1<<9)|(1<<8)|(1<<5)|(1<<2)|1,dd=d<<12;while(bchd(dd)-bchd(g)>=0)dd^=g<<(bchd(dd)-bchd(g));return(d<<12)|dd;}
+function bchd(d){var n=0;while(d!=0){n++;d>>>=1;}return n;}
+function getMF(p){var fs=[function(i,j){return(i+j)%2==0;},function(i,j){return i%2==0;},function(i,j){return j%3==0;},function(i,j){return(i+j)%3==0;},function(i,j){return(Math.floor(i/2)+Math.floor(j/3))%2==0;},function(i,j){return(i*j)%2+(i*j)%3==0;},function(i,j){return((i*j)%2+(i*j)%3)%2==0;},function(i,j){return((i*j)%3+(i+j)%2)%2==0;}];return fs[p];}
+function getLenBits(mode,t){return(t<10?8:16);}
+var EXP=[],LOG=[];for(var i=0;i<256;i++)EXP.push(i<8?1<<i:EXP[i-4]^EXP[i-5]^EXP[i-6]^EXP[i-8]);for(var i=0;i<255;i++)LOG[EXP[i]]=i;
+function gexp(n){while(n<0)n+=255;while(n>=256)n-=255;return EXP[n];}
+function glog(n){return LOG[n];}
+function poly(num,sh){var o=0;while(o<num.length&&num[o]==0)o++;var r=[];for(var i=0;i<num.length-o+sh;i++)r.push(i<num.length-o?num[i+o]:0);
+  return{a:r,len:function(){return r.length;},at:function(i){return r[i];},
+  mul:function(e){var n=[];for(var i=0;i<r.length+e.len()-1;i++)n.push(0);for(var i=0;i<r.length;i++)for(var j=0;j<e.len();j++)n[i+j]^=gexp(glog(r[i])+glog(e.at(j)));return poly(n,0);},
+  mod:function(e){if(r.length-e.len()<0)return this;var rat=glog(r[0])-glog(e.at(0)),n=r.slice();for(var i=0;i<e.len();i++)n[i]^=gexp(glog(e.at(i))+rat);return poly(n,0).mod(e);}};}
+function ecPoly(n){var a=poly([1],0);for(var i=0;i<n;i++)a=a.mul(poly([1,gexp(i)],0));return a;}
+var RST=[[1,26,19],[1,26,16],[1,26,13],[1,26,9],[1,44,34],[1,44,28],[1,44,22],[1,44,16],[1,70,55],[1,70,44],[2,35,17],[2,35,13],[1,100,80],[2,50,32],[2,50,24],[4,25,9],[1,134,108],[2,67,43],[2,33,15,2,34,16],[2,33,11,2,34,12],[2,86,68],[4,43,27],[4,43,19],[4,43,15],[2,98,78],[4,49,31],[2,32,14,4,33,15],[4,39,13,1,40,14],[2,121,97],[2,60,38,2,61,39],[4,40,18,2,41,19],[4,40,14,2,41,15],[2,146,116],[3,58,36,2,59,37],[4,36,16,4,37,17],[4,36,12,4,37,13],[2,86,68,2,87,69],[4,69,43,1,70,44],[6,43,19,2,44,20],[6,43,15,2,44,16],[4,101,81],[1,80,50,4,81,51],[4,50,22,4,51,23],[3,36,12,8,37,13],[2,116,92,2,117,93],[6,58,36,2,59,37],[4,46,20,6,47,21],[7,42,14,4,43,15],[4,133,107],[8,59,37,1,60,38],[8,44,20,4,45,21],[12,33,11,4,34,12],[3,145,115,1,146,116],[4,64,40,5,65,41],[11,36,16,5,37,17],[11,36,12,5,37,13],[5,109,87,1,110,88],[5,65,41,5,66,42],[5,54,24,7,55,25],[11,36,12],[5,122,98,1,123,99],[7,73,45,3,74,46],[15,43,19,2,44,20],[3,45,15,13,46,16],[1,135,107,5,136,108],[10,74,46,1,75,47],[1,50,22,15,51,23],[2,42,14,17,43,15],[5,150,120,1,151,121],[9,69,43,4,70,44],[17,50,22,1,51,23],[2,42,14,19,43,15],[3,141,113,4,142,114],[3,70,44,11,71,45],[17,47,21,4,48,22],[9,39,13,16,40,14],[3,135,107,5,136,108],[3,67,41,13,68,42],[15,54,24,5,55,25],[15,43,15,10,44,16],[4,144,116,4,145,117],[17,68,42],[17,50,22,6,51,23],[19,46,16,6,47,17],[2,139,111,7,140,112],[17,74,46],[7,54,24,16,55,25],[34,37,13],[4,151,121,5,152,122],[4,75,47,14,76,48],[11,54,24,14,55,25],[16,45,15,14,46,16],[6,147,117,4,148,118],[6,73,45,14,74,46],[11,54,24,16,55,25],[30,46,16,2,47,17],[8,132,106,4,133,107],[8,75,47,13,76,48],[7,54,24,22,55,25],[22,45,15,13,46,16],[10,142,114,2,143,115],[19,74,46,4,75,47],[28,50,22,6,51,23],[33,46,16,4,47,17],[8,152,122,4,153,123],[22,73,45,3,74,46],[8,53,23,26,54,24],[12,45,15,28,46,16],[3,147,117,10,148,118],[3,73,45,23,74,46],[4,54,24,31,55,25],[11,45,15,31,46,16],[7,146,116,7,147,117],[21,73,45,7,74,46],[1,53,23,37,54,24],[19,45,15,26,46,16],[5,145,115,10,146,116],[19,75,47,10,76,48],[15,54,24,25,55,25],[23,45,15,25,46,16],[13,145,115,3,146,116],[2,74,46,29,75,47],[42,54,24,1,55,25],[23,45,15,28,46,16],[17,145,115],[10,74,46,23,75,47],[10,54,24,35,55,25],[19,45,15,35,46,16],[17,145,115,1,146,116],[14,74,46,21,75,47],[29,54,24,19,55,25],[11,45,15,46,46,16],[13,145,115,6,146,116],[14,74,46,23,75,47],[44,54,24,7,55,25],[59,46,16,1,47,17],[12,151,121,7,152,122],[12,75,47,26,76,48],[39,54,24,14,55,25],[22,45,15,41,46,16],[6,151,121,14,152,122],[6,75,47,34,76,48],[46,54,24,10,55,25],[2,45,15,64,46,16],[17,152,122,4,153,123],[29,74,46,14,75,47],[49,54,24,10,55,25],[24,45,15,46,46,16],[4,152,122,18,153,123],[13,74,46,32,75,47],[48,54,24,14,55,25],[42,45,15,32,46,16],[20,147,117,4,148,118],[40,75,47,7,76,48],[43,54,24,22,55,25],[10,45,15,67,46,16],[19,148,118,6,149,119],[18,75,47,31,76,48],[34,54,24,34,55,25],[20,45,15,61,46,16]];
+function getRSB(tn,ecl){var t=RST[(tn-1)*4+ecl],list=[];for(var i=0;i<t.length;i+=3)for(var j=0;j<t[i];j++)list.push({tc:t[i+1],dc:t[i+2]});return list;}
+function mkBuf(){var buf=[],len=0;return{put:function(n,l){for(var i=0;i<l;i++)putBit(((n>>>(l-i-1))&1)==1);},putBit:function(b){var bi=Math.floor(len/8);if(buf.length<=bi)buf.push(0);if(b)buf[bi]|=0x80>>>(len%8);len++;},getBuffer:function(){return buf;},len:function(){return len;}};}
+function createData(tn,ecl,dl){
+  var rsb=getRSB(tn,ecl),buf=mkBuf(),tdc=0;for(var i=0;i<rsb.length;i++)tdc+=rsb[i].dc;
+  for(var i=0;i<dl.length;i++){var d=dl[i];buf.put(d.getMode(),4);buf.put(d.getLength(),getLenBits(4,tn));d.write(buf);}
+  if(buf.len()>tdc*8)throw new Error('overflow');if(buf.len()+4<=tdc*8)buf.put(0,4);
+  while(buf.len()%8!=0)buf.putBit(false);
+  while(buf.len()<tdc*8){buf.put(0xEC,8);if(buf.len()<tdc*8)buf.put(0x11,8);}
+  return createBytes(buf,rsb);}
+function createBytes(buf,rsb){var off=0,mdc=0,mec=0,dc=[],ec=[];
+  for(var r=0;r<rsb.length;r++){var dct=rsb[r].dc,ect=rsb[r].tc-dct;mdc=Math.max(mdc,dct);mec=Math.max(mec,ect);dc[r]=[];for(var i=0;i<dct;i++)dc[r][i]=0xff&buf.getBuffer()[i+off];off+=dct;var rp=ecPoly(ect),rw=poly(dc[r],rp.len()-1),mp2=rw.mod(rp);ec[r]=[];for(var i=0;i<rp.len()-1;i++){var mi=i+mp2.len()-rp.len()+1;ec[r][i]=(mi>=0)?mp2.at(mi):0;}}
+  var tot=0;for(var i=0;i<rsb.length;i++)tot+=rsb[i].tc;var data=[],idx=0;
+  for(var i=0;i<mdc;i++)for(var r=0;r<rsb.length;r++)if(i<dc[r].length)data[idx++]=dc[r][i];
+  for(var i=0;i<mec;i++)for(var r=0;r<rsb.length;r++)if(i<ec[r].length)data[idx++]=ec[r][i];
+  return data;}
+g.qrcode=qrcode;
+})(window);
+// Wrapper: generate QR as SVG data-URL (no external API)
+function makeQRDataURL(text,sizePx){
+  try{
+    var qr=qrcode(0,'M');qr.addData(text);qr.make();
+    var cs=Math.max(1,Math.floor((sizePx||100)/qr.getModuleCount()));
+    var svg=qr.toSVG(cs,cs*2);
+    return'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg);
+  }catch(e){console.warn('QR fail:',e);return'';}
+}
+// ===== END QR GENERATOR =====
+// ==================== END SECURITY ====================
+
 // ==================== DATA ====================
 const SK = 'asthma_v2';
-let DB = {patients:[],visits:[],dispensing:[],drugs:[],users:{nurse:'nurse1234',pharmacist:'pharm1234',admin:'admin1234'}};
-let SESSION = {role:null}; // public/nurse/pharmacist/admin
+let DB = {patients:[],visits:[],dispensing:[],drugs:[],
+  users:{nurse:'N1234',pharmacist:'P1234',admin:'admin11091'},
+  userAccounts:[],auditLog:[],pwVersion:0};
+let SESSION = {role:null, userId:null, userName:null, userDisplayName:null};
 let loginTarget = '';
 
 function loadDB(){try{const d=localStorage.getItem(SK);if(d)DB=JSON.parse(d);}catch(e){}}
@@ -286,18 +427,18 @@ function diffDays(a,b){return Math.round((new Date(b)-new Date(a))/(86400000));}
 
 // ==================== DEFAULT DRUGS ====================
 const DEFAULT_DRUGS=[
-  {id:'d1',name:'Salbutamol MDI 100mcg (Ventolin)',dose:'100',puffs:200,type:'SABA',cat:'rescue',brand:'Ventolin',color:'#2196F3'},
-  {id:'d2',name:'Salbutamol Turbuhaler',dose:'100',puffs:200,type:'SABA',cat:'rescue',brand:'Bricanyl',color:'#2196F3'},
-  {id:'d3',name:'Budesonide 200mcg (Pulmicort)',dose:'200',puffs:100,type:'ICS',cat:'controller',brand:'Pulmicort',color:'#4CAF50'},
-  {id:'d4',name:'Fluticasone 50mcg (Flixotide)',dose:'50',puffs:120,type:'ICS',cat:'controller',brand:'Flixotide',color:'#4CAF50'},
-  {id:'d5',name:'Fluticasone 125mcg (Flixotide)',dose:'125',puffs:120,type:'ICS',cat:'controller',brand:'Flixotide',color:'#4CAF50'},
-  {id:'d6',name:'Fluticasone 250mcg (Flixotide)',dose:'250',puffs:120,type:'ICS',cat:'controller',brand:'Flixotide',color:'#4CAF50'},
-  {id:'d7',name:'Budesonide/Formoterol 80/4.5 (Symbicort)',dose:'80/4.5',puffs:120,type:'ICS/LABA',cat:'controller',brand:'Symbicort',color:'#9C27B0'},
-  {id:'d8',name:'Budesonide/Formoterol 160/4.5 (Symbicort)',dose:'160/4.5',puffs:120,type:'ICS/LABA',cat:'controller',brand:'Symbicort',color:'#9C27B0'},
-  {id:'d9',name:'Fluticasone/Salmeterol 25/50 (Seretide)',dose:'25/50',puffs:120,type:'ICS/LABA',cat:'controller',brand:'Seretide',color:'#9C27B0'},
-  {id:'d10',name:'Fluticasone/Salmeterol 25/125 (Seretide)',dose:'25/125',puffs:120,type:'ICS/LABA',cat:'controller',brand:'Seretide',color:'#9C27B0'},
-  {id:'d11',name:'Tiotropium (Spiriva)',dose:'18',puffs:30,type:'LAMA',cat:'controller',brand:'Spiriva',color:'#FF9800'},
-  {id:'d12',name:'Ipratropium (Atrovent)',dose:'20',puffs:200,type:'SAMA',cat:'rescue',brand:'Atrovent',color:'#FF5722'},
+  {id:'d1',name:'Salbutamol MDI 100mcg (Ventolin)',dose:'100',puffs:200,type:'SABA',cat:'rescue',brand:'Ventolin',color:'#2196F3',price:45},
+  {id:'d2',name:'Salbutamol Turbuhaler',dose:'100',puffs:200,type:'SABA',cat:'rescue',brand:'Bricanyl',color:'#2196F3',price:55},
+  {id:'d3',name:'Budesonide 200mcg (Pulmicort)',dose:'200',puffs:100,type:'ICS',cat:'controller',brand:'Pulmicort',color:'#4CAF50',price:320},
+  {id:'d4',name:'Fluticasone 50mcg (Flixotide)',dose:'50',puffs:120,type:'ICS',cat:'controller',brand:'Flixotide',color:'#4CAF50',price:280},
+  {id:'d5',name:'Fluticasone 125mcg (Flixotide)',dose:'125',puffs:120,type:'ICS',cat:'controller',brand:'Flixotide',color:'#4CAF50',price:390},
+  {id:'d6',name:'Fluticasone 250mcg (Flixotide)',dose:'250',puffs:120,type:'ICS',cat:'controller',brand:'Flixotide',color:'#4CAF50',price:520},
+  {id:'d7',name:'Budesonide/Formoterol 80/4.5 (Symbicort)',dose:'80/4.5',puffs:120,type:'ICS/LABA',cat:'controller',brand:'Symbicort',color:'#9C27B0',price:850},
+  {id:'d8',name:'Budesonide/Formoterol 160/4.5 (Symbicort)',dose:'160/4.5',puffs:120,type:'ICS/LABA',cat:'controller',brand:'Symbicort',color:'#9C27B0',price:950},
+  {id:'d9',name:'Fluticasone/Salmeterol 25/50 (Seretide)',dose:'25/50',puffs:120,type:'ICS/LABA',cat:'controller',brand:'Seretide',color:'#9C27B0',price:780},
+  {id:'d10',name:'Fluticasone/Salmeterol 25/125 (Seretide)',dose:'25/125',puffs:120,type:'ICS/LABA',cat:'controller',brand:'Seretide',color:'#9C27B0',price:920},
+  {id:'d11',name:'Tiotropium (Spiriva)',dose:'18',puffs:30,type:'LAMA',cat:'controller',brand:'Spiriva',color:'#FF9800',price:1200},
+  {id:'d12',name:'Ipratropium (Atrovent)',dose:'20',puffs:200,type:'SAMA',cat:'rescue',brand:'Atrovent',color:'#FF5722',price:180},
 ];
 
 // ==================== BOOT ====================
@@ -339,7 +480,7 @@ function searchPtHistory(){
     ptMap[v.hn].visits.push(v);
   });
   DB.patients.forEach(p=>{if(!ptMap[p.hn])ptMap[p.hn]={hn:p.hn,name:p.name,dx:p.dx,visits:[]};});
-  const pts=Object.values(ptMap).filter(p=>!q||(p.hn+' '+p.name).toLowerCase().includes(q));
+  const pts=q ? smartFilter(Object.values(ptMap), q, p=>p) : Object.values(ptMap);
   pts.sort((a,b)=>{
     const la=a.visits.sort((x,y)=>new Date(y.date)-new Date(x.date))[0]?.date||'';
     const lb=b.visits.sort((x,y)=>new Date(y.date)-new Date(x.date))[0]?.date||'';
@@ -399,128 +540,481 @@ function showPtHistory(hn){
       </div>
     </div>`;
   }).join('');
+  // Compile all returned inhalers across all visits
+  const allReturns=[];
+  visits.forEach(v=>{
+    (v.returnedInhalers||[]).forEach(r=>{
+      allReturns.push({date:v.date,drugName:r.drugName,drugId:r.drugId,qty:r.qty||1,
+        price:(DB.drugs.find(d=>d.id===r.drugId||d.name===r.drugName)?.price||0)});
+    });
+  });
+  const retSummaryByDrug={};
+  allReturns.forEach(r=>{
+    if(!retSummaryByDrug[r.drugName])retSummaryByDrug[r.drugName]={qty:0,value:0};
+    retSummaryByDrug[r.drugName].qty+=r.qty;
+    retSummaryByDrug[r.drugName].value+=r.qty*r.price;
+  });
+  const totalRetQty=allReturns.reduce((s,r)=>s+r.qty,0);
+  const totalRetVal=allReturns.reduce((s,r)=>s+r.qty*r.price,0);
+
+  const retSectionHtml=allReturns.length?`
+    <div style="border:1.5px solid #a5d6a7;border-radius:10px;overflow:hidden;margin-bottom:14px;">
+      <div style="background:#e8f5e9;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer;" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'">
+        <span style="font-weight:800;color:#2e7d32;font-size:13px;">🔄 ประวัติยาคืนทั้งหมด — ${totalRetQty} กระบอก${totalRetVal>0?' (ประหยัด ฿'+totalRetVal.toLocaleString()+')':''}</span>
+        <span style="color:#2e7d32;font-size:11px;">แตะเพื่อดู/ซ่อน ▼</span>
+      </div>
+      <div style="padding:10px 14px;display:block;">
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
+          ${Object.entries(retSummaryByDrug).map(([name,s])=>`<span style="background:#c8e6c9;border-radius:6px;padding:3px 10px;font-size:12px;color:#1b5e20;"><b>${name.length>20?name.slice(0,18)+'…':name}</b> · ${s.qty} หลอด${s.value>0?' · ฿'+s.value.toLocaleString():''}</span>`).join('')}
+        </div>
+        <table style="width:100%;font-size:12px;border-collapse:collapse;">
+          <thead><tr style="background:#f1f8e9;"><th style="padding:5px 8px;text-align:left;border-bottom:1px solid #c8e6c9;">วันที่</th><th style="padding:5px 8px;text-align:left;border-bottom:1px solid #c8e6c9;">ยา</th><th style="padding:5px 8px;text-align:center;border-bottom:1px solid #c8e6c9;">จำนวน</th><th style="padding:5px 8px;text-align:right;border-bottom:1px solid #c8e6c9;">มูลค่า</th></tr></thead>
+          <tbody>${allReturns.map(r=>`<tr><td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${fmtShort(r.date)}</td><td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${r.drugName}</td><td style="padding:4px 8px;text-align:center;border-bottom:1px solid #f0f0f0;">${r.qty} หลอด</td><td style="padding:4px 8px;text-align:right;border-bottom:1px solid #f0f0f0;">${r.price?'฿'+(r.qty*r.price).toLocaleString():'–'}</td></tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>`:'';
+
   bodyEl.innerHTML=`
     <div style="background:linear-gradient(135deg,var(--pd),var(--p));color:#fff;padding:12px 16px;border-radius:8px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
       <div><div style="font-size:16px;font-weight:800;">${pt.name}</div><div style="font-size:12px;opacity:.85;">HN: ${hn} · ${visits.length} visits · ${dxPill(pt.dx||getPatDx(hn))}</div></div>
     </div>
+    ${retSectionHtml}
     ${visits.length?visitCards:'<div style="color:var(--tm);text-align:center;padding:30px;">ยังไม่มีประวัติ</div>'}`;
   modal.style.display='flex';
 }
 
+
+// ==================== USER ACCOUNTS (Admin) ====================
+function vUserAccounts(){
+  if(!DB.userAccounts)DB.userAccounts=[];
+  setContent(`
+  <div class="card">
+    <div class="ch">
+      <span class="ct">👤 จัดการผู้ใช้งาน</span>
+      <button class="btn bp bsm" onclick="openAddUserModal()">+ เพิ่มผู้ใช้</button>
+    </div>
+    <div class="al ali" style="margin-bottom:12px;"><span>ℹ️</span><span>Admin สามารถสร้าง/แก้ไข/ระงับบัญชีผู้ใช้ และกำหนด role สิทธิ์ได้</span></div>
+    <div class="tw">${renderUserTable()}</div>
+  </div>
+  <!-- Add/Edit User Modal -->
+  <div id="user-modal" class="mo" style="display:none;">
+    <div class="mb" style="max-width:480px;width:100%;">
+      <div class="mh"><h3 id="user-modal-title">เพิ่มผู้ใช้</h3><button class="mx" onclick="closeModal('user-modal')">×</button></div>
+      <div class="mc">
+        <div class="fgrid">
+          <div class="fg"><label>Username *</label><input id="um-user" placeholder="ตัวอักษร/ตัวเลข ไม่มีช่องว่าง"></div>
+          <div class="fg"><label>ชื่อ-สกุล</label><input id="um-name" placeholder="ชื่อที่แสดงในระบบ"></div>
+          <div class="fg"><label>Role / สิทธิ์ *</label>
+            <select id="um-role">
+              <option value="nurse">พยาบาล</option>
+              <option value="pharmacist">เภสัชกร</option>
+              <option value="doctor">แพทย์</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+          <div class="fg"><label>รหัสผ่าน <span id="um-pw-hint" style="font-size:11px;color:var(--tm);">(กรอกเพื่อตั้งใหม่)</span></label>
+            <input type="password" id="um-pw" placeholder="รหัสผ่าน"></div>
+        </div>
+        <div id="um-err" style="color:#e53935;font-size:12px;margin-bottom:8px;display:none;"></div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn bp" style="flex:1" onclick="saveUserAccount()">💾 บันทึก</button>
+          <button class="btn bgray" onclick="closeModal('user-modal')">ยกเลิก</button>
+        </div>
+      </div>
+    </div>
+  </div>`);
+}
+function renderUserTable(){
+  const accts=DB.userAccounts||[];
+  if(!accts.length)return'<div style="text-align:center;padding:24px;color:var(--tm);">ยังไม่มีบัญชีผู้ใช้<br><small>รหัสผ่าน role หลัก (nurse/pharmacist/doctor/admin) ยังใช้งานได้ตามปกติ</small></div>';
+  const rLabel={nurse:'👩‍⚕️ พยาบาล',pharmacist:'💊 เภสัชกร',doctor:'🩺 แพทย์',admin:'⚙️ Admin'};
+  return`<table><thead><tr><th>Username</th><th>ชื่อ</th><th>Role</th><th>สถานะ</th><th>สร้างเมื่อ</th><th>Action</th></tr></thead><tbody>
+  ${accts.map(u=>`<tr>
+    <td><strong>${u.username}</strong></td>
+    <td>${u.name||'–'}</td>
+    <td><span class="pill ${u.role==='admin'?'pr':u.role==='doctor'?'pb':u.role==='pharmacist'?'py':'pg'}">${rLabel[u.role]||u.role}</span></td>
+    <td>${u.active?'<span class="pill pg">✅ ใช้งาน</span>':'<span class="pill pr">🚫 ระงับ</span>'}</td>
+    <td style="font-size:12px;">${u.createdAt?fmtShort(u.createdAt):'–'}</td>
+    <td style="display:flex;gap:4px;flex-wrap:wrap;">
+      <button class="btn bsm bo" onclick="editUserModal('${u.id}')">✏️</button>
+      <button class="btn bsm ${u.active?'bw':'bg'}" onclick="toggleUserActive('${u.id}')">${u.active?'🚫 ระงับ':'✅ เปิด'}</button>
+      <button class="btn bsm bp" onclick="resetUserPw('${u.id}')">🔑 รีเซ็ต</button>
+    </td>
+  </tr>`).join('')}</tbody></table>`;
+}
+let _editUserId=null;
+function openAddUserModal(){
+  _editUserId=null;
+  document.getElementById('user-modal-title').textContent='เพิ่มผู้ใช้ใหม่';
+  document.getElementById('um-pw-hint').textContent='(บังคับกรอก)';
+  ['um-user','um-name','um-pw'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('um-role').value='nurse';
+  document.getElementById('um-err').style.display='none';
+  document.getElementById('user-modal').style.display='flex';
+}
+function editUserModal(id){
+  const u=(DB.userAccounts||[]).find(x=>x.id===id);if(!u)return;
+  _editUserId=id;
+  document.getElementById('user-modal-title').textContent='แก้ไขผู้ใช้: '+u.username;
+  document.getElementById('um-pw-hint').textContent='(ว่าง=ไม่เปลี่ยนรหัส)';
+  document.getElementById('um-user').value=u.username;
+  document.getElementById('um-name').value=u.name||'';
+  document.getElementById('um-role').value=u.role;
+  document.getElementById('um-pw').value='';
+  document.getElementById('um-err').style.display='none';
+  document.getElementById('user-modal').style.display='flex';
+}
+async function saveUserAccount(){
+  const username=document.getElementById('um-user').value.trim().toLowerCase();
+  const name=document.getElementById('um-name').value.trim();
+  const role=document.getElementById('um-role').value;
+  const pw=document.getElementById('um-pw').value;
+  const errEl=document.getElementById('um-err');
+  if(!username){errEl.textContent='กรุณากรอก Username';errEl.style.display='block';return;}
+  if(!/^[a-zA-Z0-9_.-]+$/.test(username)){errEl.textContent='Username ใช้ได้เฉพาะ a-z 0-9 _ . -';errEl.style.display='block';return;}
+  if(!DB.userAccounts)DB.userAccounts=[];
+  const dup=(DB.userAccounts||[]).find(u=>u.username===username&&u.id!==_editUserId);
+  if(dup){errEl.textContent='Username นี้ถูกใช้แล้ว';errEl.style.display='block';return;}
+  if(!_editUserId&&!pw){errEl.textContent='กรุณาตั้งรหัสผ่าน';errEl.style.display='block';return;}
+  if(pw&&pw.length<4){errEl.textContent='รหัสผ่านต้องมีอย่างน้อย 4 ตัวอักษร';errEl.style.display='block';return;}
+  if(_editUserId){
+    const u=DB.userAccounts.find(x=>x.id===_editUserId);if(!u)return;
+    u.username=username;u.name=name;u.role=role;
+    if(pw)u.pwHash=await sha256hex(pw);
+    alog('USER_EDIT','แก้ไข: '+username+' role:'+role);
+  } else {
+    const pwHash=await sha256hex(pw);
+    DB.userAccounts.push({id:uid(),username,name,role,pwHash,active:true,createdAt:new Date().toISOString(),createdBy:SESSION.userId});
+    alog('USER_ADD','เพิ่ม: '+username+' role:'+role);
+  }
+  saveDB();closeModal('user-modal');vUserAccounts();toast('บันทึกบัญชีผู้ใช้เรียบร้อย');
+}
+function toggleUserActive(id){
+  const u=(DB.userAccounts||[]).find(x=>x.id===id);if(!u)return;
+  u.active=!u.active;saveDB();
+  alog(u.active?'USER_ENABLE':'USER_DISABLE','user: '+u.username);
+  vUserAccounts();toast(u.active?'เปิดใช้งานแล้ว':'ระงับบัญชีแล้ว');
+}
+async function resetUserPw(id){
+  const u=(DB.userAccounts||[]).find(x=>x.id===id);if(!u)return;
+  const newPw=prompt('รหัสผ่านใหม่สำหรับ '+u.username+':');
+  if(!newPw||newPw.length<4){toast('รหัสผ่านสั้นเกินไป','e');return;}
+  u.pwHash=await sha256hex(newPw);saveDB();
+  alog('USER_RESET_PW','reset pw: '+u.username);
+  toast('รีเซ็ตรหัสผ่านเรียบร้อย');
+}
+
+// ==================== AUDIT LOG (Admin) ====================
+function vAuditLog(){
+  setContent(`
+  <div class="card">
+    <div class="ch"><span class="ct">📋 Audit Log — ประวัติการใช้งาน</span></div>
+    <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+      <input id="audit-q" placeholder="🔍 ค้นหา username / action / HN..." style="flex:1;min-width:180px;padding:8px 12px;border:1.5px solid var(--bd);border-radius:7px;font-size:13px;" oninput="filterAudit()">
+      <select id="audit-role" onchange="filterAudit()" style="padding:8px;border:1.5px solid var(--bd);border-radius:7px;">
+        <option value="">ทุก Role</option>
+        <option value="nurse">พยาบาล</option>
+        <option value="pharmacist">เภสัชกร</option>
+        <option value="doctor">แพทย์</option>
+        <option value="admin">Admin</option>
+      </select>
+      <select id="audit-action" onchange="filterAudit()" style="padding:8px;border:1.5px solid var(--bd);border-radius:7px;">
+        <option value="">ทุก Action</option>
+        <option value="LOGIN">Login</option>
+        <option value="VISIT">Visit</option>
+        <option value="DISPENSE">จ่ายยา</option>
+        <option value="RESCUE_LOG">ยาฉุกเฉิน</option>
+        <option value="PATIENT">ผู้ป่วย</option>
+        <option value="USER">จัดการUser</option>
+        <option value="DRUG">ยา</option>
+      </select>
+    </div>
+    <div class="tw" id="audit-body">${renderAuditTable(DB.auditLog||[])}</div>
+  </div>`);
+}
+function renderAuditTable(logs){
+  if(!logs.length)return'<div style="text-align:center;padding:24px;color:var(--tm);">ยังไม่มีประวัติ</div>';
+  const actionColor={LOGIN:'#1565c0',VISIT_CREATE:'#2e7d32',NURSE_VERIFY:'#1b5e20',DISPENSE:'#4527a0',RESCUE_LOG:'#b71c1c',PATIENT_ADD:'#e65100',USER_ADD:'#880e4f',USER_EDIT:'#880e4f',USER_DISABLE:'#c62828',DRUG_SAVE:'#827717'};
+  return`<table><thead><tr><th>เวลา</th><th>User</th><th>Role</th><th>Action</th><th>รายละเอียด</th></tr></thead><tbody>
+  ${logs.slice(0,500).map(l=>`<tr>
+    <td style="font-size:11px;white-space:nowrap;">${new Date(l.ts).toLocaleString('th-TH',{dateStyle:'short',timeStyle:'short'})}</td>
+    <td><strong style="color:${actionColor[l.action]||'#333'}">${l.userName||'?'}</strong></td>
+    <td style="font-size:11px;">${{nurse:'พยาบาล',pharmacist:'เภสัชกร',doctor:'แพทย์',admin:'Admin',public:'Public'}[l.role]||l.role||'?'}</td>
+    <td><code style="background:#f5f5f5;padding:1px 5px;border-radius:3px;font-size:11px;color:${actionColor[l.action]||'#555'}">${l.action}</code></td>
+    <td style="font-size:12px;color:#555;">${l.detail||'–'}</td>
+  </tr>`).join('')}</tbody></table>`;
+}
+function filterAudit(){
+  const q=(document.getElementById('audit-q')?.value||'').toLowerCase();
+  const role=document.getElementById('audit-role')?.value||'';
+  const action=document.getElementById('audit-action')?.value||'';
+  let logs=DB.auditLog||[];
+  if(q)logs=logs.filter(l=>(l.userName+l.action+l.detail+l.userId).toLowerCase().includes(q));
+  if(role)logs=logs.filter(l=>l.role===role);
+  if(action)logs=logs.filter(l=>l.action.startsWith(action));
+  const b=document.getElementById('audit-body');if(b)b.innerHTML=renderAuditTable(logs);
+}
+// ==================== END USER ACCOUNTS ====================
 // ---- IN-APP GUIDE ----
 function vGuide(){
-  setContent(`<div style="max-width:800px;margin:0 auto;">
-  <div style="background:linear-gradient(135deg,#0d47a1,#42a5f5);color:#fff;border-radius:10px;padding:24px;text-align:center;margin-bottom:20px;">
+  setContent(`<div style="max-width:820px;margin:0 auto;padding-bottom:20px;">
+
+  <!-- Header -->
+  <div style="background:linear-gradient(135deg,#0d47a1,#42a5f5);color:#fff;border-radius:12px;padding:24px;text-align:center;margin-bottom:16px;">
     <div style="font-size:2.5rem;">🫁</div>
     <h2 style="font-size:1.3rem;font-weight:800;margin:8px 0 4px;">Asthma / COPD Clinic System</h2>
-    <p style="font-size:.9rem;opacity:.9;">คู่มือการใช้งานสำหรับทีมสุขภาพ</p>
+    <p style="font-size:.9rem;opacity:.9;margin:0;">คู่มือการใช้งานฉบับสมบูรณ์ — อัปเดตล่าสุด 2568</p>
   </div>
 
   <!-- Roles -->
   <div class="card" style="margin-bottom:14px;">
-    <div class="ch"><span class="ct">👥 บทบาทผู้ใช้งาน & รหัสผ่าน</span></div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:8px;">
-      ${[{r:'ผู้ป่วย/อสม.',ic:'🏠',p:'ไม่ต้องล็อกอิน',c:'#546e7a'},
-         {r:'พยาบาล',ic:'🩺',p:'nurse1234',c:'#00897b'},
-         {r:'แพทย์',ic:'👨‍⚕️',p:'doctor1234',c:'#1565c0'},
-         {r:'เภสัชกร',ic:'💊',p:'pharm1234',c:'#6a1b9a'},
-         {r:'Admin',ic:'⚙️',p:'admin1234',c:'#e65100'}].map(x=>`
-        <div style="border-top:3px solid ${x.c};border-radius:8px;padding:12px;text-align:center;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.07);">
-          <div style="font-size:1.8rem;">${x.ic}</div>
-          <div style="font-weight:800;font-size:.9rem;margin:4px 0;">${x.r}</div>
-          <div style="background:#f0f4ff;border-radius:4px;padding:2px 6px;font-size:.75rem;font-family:monospace;color:var(--p);">${x.p}</div>
-        </div>`).join('')}
+    <div class="ch"><span class="ct">👥 บทบาทและรหัสผ่าน</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:10px;">
+      ${[
+        {r:'ผู้ป่วย / อสม.',ic:'🏠',p:'ไม่ต้องล็อกอิน',c:'#546e7a',note:'ประเมินอาการ + บันทึกยาฉุกเฉิน'},
+        {r:'พยาบาล',ic:'🩺',p:'nurse1234',c:'#00897b',note:'ยืนยันข้อมูล + ส่งต่อเภสัช'},
+        {r:'แพทย์',ic:'👨‍⚕️',p:'doctor1234',c:'#1565c0',note:'ดูสรุปผล (read-only)'},
+        {r:'เภสัชกร',ic:'💊',p:'pharm1234',c:'#6a1b9a',note:'จ่ายยา + ประเมินเทคนิค'},
+        {r:'Admin',ic:'⚙️',p:'admin1234',c:'#e65100',note:'จัดการระบบทั้งหมด'},
+      ].map(x=>`
+      <div style="border-top:3px solid ${x.c};border-radius:8px;padding:12px;text-align:center;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.08);">
+        <div style="font-size:1.8rem;">${x.ic}</div>
+        <div style="font-weight:800;font-size:.85rem;margin:4px 0;">${x.r}</div>
+        <div style="background:#f0f4ff;border-radius:4px;padding:2px 6px;font-size:.75rem;font-family:monospace;color:var(--p);margin-bottom:5px;">${x.p}</div>
+        <div style="font-size:.72rem;color:var(--tm);line-height:1.4;">${x.note}</div>
+      </div>`).join('')}
     </div>
-    <div style="background:#e8f2fc;border-radius:6px;padding:8px 12px;margin-top:10px;font-size:12px;">💡 เปลี่ยนรหัสผ่านได้ใน Admin → ตั้งค่า</div>
+    <div style="background:#e8f2fc;border-radius:6px;padding:8px 12px;margin-top:10px;font-size:12px;">💡 เปลี่ยนรหัสผ่านได้ใน <b>Admin → ตั้งค่า</b></div>
   </div>
 
   <!-- Workflow -->
   <div class="card" style="margin-bottom:14px;">
-    <div class="ch"><span class="ct">🔄 Workflow การทำงาน</span></div>
-    <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin:10px 0;">
-      ${[['📋 ผู้ป่วยประเมิน','#546e7a'],['✅ พยาบาลยืนยัน','#00897b'],['🩺 แพทย์วินิจฉัย','#1565c0'],['💊 เภสัชจ่ายยา','#6a1b9a'],['✅ เสร็จสิ้น','#2e7d32']].map((x,i,a)=>`
-        <span style="background:${x[1]};color:#fff;border-radius:20px;padding:5px 12px;font-size:.8rem;font-weight:700;">${x[0]}</span>
-        ${i<a.length-1?'<span style="color:#999;">→</span>':''}`).join('')}
+    <div class="ch"><span class="ct">🔄 Workflow การทำงานหลัก</span></div>
+    <div style="margin-top:12px;">
+      <div style="display:flex;align-items:stretch;flex-wrap:wrap;gap:4px;margin-bottom:12px;">
+        ${[
+          ['📋','ผู้ป่วย/พยาบาล\nประเมินอาการ','#546e7a'],
+          ['✅','พยาบาลยืนยัน\nข้อมูล','#00897b'],
+          ['💊','เภสัชจ่ายยา\n+ ประเมินเทคนิค','#6a1b9a'],
+          ['✅','เสร็จสิ้น','#2e7d32'],
+        ].map((x,i,a)=>`
+          <div style="flex:1;min-width:90px;background:${x[2]};color:#fff;border-radius:8px;padding:10px 8px;text-align:center;font-size:.78rem;font-weight:700;line-height:1.5;white-space:pre-line;">${x[0]}\n${x[1]}</div>
+          ${i<a.length-1?'<div style="display:flex;align-items:center;color:#aaa;font-size:1.2rem;">→</div>':''}`).join('')}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12.5px;">
+        <div style="background:#fff3e0;border-radius:7px;padding:10px 12px;border-left:3px solid #ff9800;">
+          <b>🔔 ส่ง Consult เภสัช</b><br>
+          <span style="color:var(--tm);">พยาบาลกด "Consult เภสัช" เมื่อผู้ป่วยควบคุมอาการไม่ได้ (ACT&lt;20) เภสัชจะเห็น badge สีส้ม</span>
+        </div>
+        <div style="background:#e8f2fc;border-radius:7px;padding:10px 12px;border-left:3px solid var(--p);">
+          <b>👨‍⚕️ แพทย์ = ดูสรุปเท่านั้น</b><br>
+          <span style="color:var(--tm);">แพทย์เห็นผลประเมิน GINA/GOLD recommendation แต่ไม่ต้องกดส่งต่อ เภสัชทำงานได้ทันทีหลังพยาบาลยืนยัน</span>
+        </div>
+      </div>
     </div>
-    <div style="font-size:12.5px;color:var(--tm);margin-top:4px;">💡 พยาบาลสามารถ <b>Consult เภสัช</b> โดยตรง (สีส้ม) สำหรับผู้ป่วยที่ควบคุมอาการไม่ดี</div>
   </div>
 
-  <!-- Disease & Scores -->
+  <!-- Assessment -->
   <div class="card" style="margin-bottom:14px;">
-    <div class="ch"><span class="ct">🔬 โรคที่รองรับ & แบบประเมิน</span></div>
+    <div class="ch"><span class="ct">📋 แบบประเมินอาการ</span></div>
     <div style="overflow-x:auto;margin-top:8px;">
       <table style="width:100%;border-collapse:collapse;font-size:12.5px;">
-        <thead><tr style="background:#f0f4ff;"><th style="padding:7px 10px;text-align:left;">โรค</th><th style="padding:7px 10px;">แบบประเมิน</th><th style="padding:7px 10px;">เกณฑ์</th></tr></thead>
+        <thead><tr style="background:#f0f4ff;">
+          <th style="padding:8px 10px;text-align:left;">โรค</th>
+          <th style="padding:8px 10px;">แบบประเมิน</th>
+          <th style="padding:8px 10px;text-align:left;">เกณฑ์ตีความ</th>
+        </tr></thead>
         <tbody>
-          <tr style="border-bottom:1px solid var(--bd);"><td style="padding:7px 10px;">🌬️ <b>Asthma</b></td><td style="padding:7px 10px;">ACT (5 ข้อ, 5–25)</td><td style="padding:7px 10px;">≥20 = Controlled · &lt;20 = Not Controlled</td></tr>
-          <tr style="border-bottom:1px solid var(--bd);"><td style="padding:7px 10px;">🫁 <b>COPD</b></td><td style="padding:7px 10px;">CAT (8 ข้อ, 0–40) + mMRC</td><td style="padding:7px 10px;">CAT ≤10 = Low · &gt;10 = High Impact</td></tr>
-          <tr><td style="padding:7px 10px;">🔵 <b>ACO</b></td><td style="padding:7px 10px;">ACT + CAT + mMRC</td><td style="padding:7px 10px;">ประเมินครบทั้ง 2 โรค</td></tr>
+          <tr style="border-bottom:1px solid var(--bd);">
+            <td style="padding:8px 10px;">🌬️ <b>Asthma</b></td>
+            <td style="padding:8px 10px;text-align:center;">ACT (5 ข้อ · 5–25)</td>
+            <td style="padding:8px 10px;"><span class="pill pg" style="font-size:10px;">≥20 Controlled</span> <span class="pill py" style="font-size:10px;">15–19 Partial</span> <span class="pill pr" style="font-size:10px;">&lt;15 Uncontrolled</span></td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--bd);">
+            <td style="padding:8px 10px;">🫁 <b>COPD</b></td>
+            <td style="padding:8px 10px;text-align:center;">CAT (8 ข้อ · 0–40) + mMRC</td>
+            <td style="padding:8px 10px;"><span class="pill pg" style="font-size:10px;">≤10 Low</span> <span class="pill py" style="font-size:10px;">11–20 Medium</span> <span class="pill pr" style="font-size:10px;">&gt;20 High</span></td>
+          </tr>
+          <tr>
+            <td style="padding:8px 10px;">🔵 <b>ACO</b></td>
+            <td style="padding:8px 10px;text-align:center;">ACT + CAT + mMRC</td>
+            <td style="padding:8px 10px;">ประเมินครบทั้ง Asthma และ COPD</td>
+          </tr>
         </tbody>
       </table>
+    </div>
+    <div style="margin-top:10px;display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;">
+      <div style="background:#f8fbff;border-radius:7px;padding:8px 12px;">💊 <b>Adherence MMAS-4</b><br><span style="color:var(--tm);">0 = High · 1-2 = Medium · 3-4 = Low</span></div>
+      <div style="background:#f8fbff;border-radius:7px;padding:8px 12px;">💨 <b>ยาพ่น Reliever</b><br><span style="color:var(--tm);">บันทึก puffs/สัปดาห์ + ยาเหลือที่บ้าน</span></div>
+    </div>
+  </div>
+
+  <!-- Pharmacist section -->
+  <div class="card" style="margin-bottom:14px;">
+    <div class="ch"><span class="ct">💊 เภสัชกร — ฟีเจอร์ครบ</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-top:10px;">
+      ${[
+        {ic:'🧮',t:'คำนวณยาพ่นอัตโนมัติ',d:'กรอก HN → ดึงชื่อและยาจากฐานข้อมูลอัตโนมัติ คำนวณจำนวนกระบอก วันเปิดใช้ และวันยาหมดของแต่ละกระบอก'},
+        {ic:'🏷️',t:'พิมพ์สติ๊กเกอร์ 70×50mm',d:'Landscape ตัวใหญ่สำหรับผู้สูงอายุ แยก Reliever (20 ช่องกา) และ Controller (วันเปิด-หมด) มี QR Code'},
+        {ic:'🔄',t:'บันทึกยาคืน',d:'กดปุ่ม "บันทึกยาคืน" เพื่อบันทึกยาพ่นที่ผู้ป่วยนำกลับมา สำหรับติดตามการใช้ยา'},
+        {ic:'💨',t:'ประเมินเทคนิคพ่นยา',d:'กดปุ่ม "ประเมินเทคนิคพ่นยา" เลือก MDI หรือ DPI 7 ขั้นตอนมาตรฐาน คะแนน realtime บันทึกแยกได้'},
+      ].map(x=>`
+      <div style="background:#faf0ff;border:1px solid #ce93d8;border-radius:8px;padding:12px;">
+        <div style="font-size:1.5rem;margin-bottom:5px;">${x.ic}</div>
+        <div style="font-weight:700;font-size:13px;color:#6a1b9a;margin-bottom:4px;">${x.t}</div>
+        <div style="font-size:12px;color:var(--tm);line-height:1.5;">${x.d}</div>
+      </div>`).join('')}
+    </div>
+  </div>
+
+  <!-- Doctor section -->
+  <div class="card" style="margin-bottom:14px;">
+    <div class="ch"><span class="ct">👨‍⚕️ แพทย์ — ดูสรุปผลผู้ป่วย</span></div>
+    <div style="font-size:12.5px;line-height:1.8;margin-top:8px;color:var(--tx);">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+        <div style="background:#e8f2fc;border-radius:7px;padding:10px 12px;">
+          📅 <b>ผู้ป่วยวันนี้</b><br>
+          <span style="color:var(--tm);font-size:12px;">แสดงเฉพาะผู้ป่วยที่มาวันนี้ กดดูรายละเอียดแบบ popup</span>
+        </div>
+        <div style="background:#e8f2fc;border-radius:7px;padding:10px 12px;">
+          🔍 <b>ค้นหาทุก Visit</b><br>
+          <span style="color:var(--tm);font-size:12px;">พิมพ์ HN หรือชื่อ จะค้นข้ามทุก visit ทุกวัน</span>
+        </div>
+      </div>
+      <div style="background:#f0f4ff;border-radius:7px;padding:10px 14px;">
+        📊 <b>Popup สรุปผล</b> แสดง: คะแนน ACT/CAT · ยาพ่น Reliever · บันทึกพยาบาล · เทคนิคพ่นยา · ยาจ่ายล่าสุด · GINA Step Up/Down recommendation
+      </div>
+    </div>
+  </div>
+
+  <!-- Patient History -->
+  <div class="card" style="margin-bottom:14px;">
+    <div class="ch"><span class="ct">📂 ประวัติผู้ป่วยรายคน</span></div>
+    <div style="font-size:12.5px;line-height:1.8;margin-top:8px;">
+      ค้นหา HN หรือชื่อ → กดชื่อ → <b>Popup ประวัติย้อนหลัง</b><br>
+      แต่ละ visit แสดง:<br>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;">
+        ${['✅ ACT / CAT / mMRC / Adherence','💨 Reliever puffs + ยาเหลือที่บ้าน','👩‍⚕️ บันทึกพยาบาล','🩺 Note และ Plan แพทย์','💊 ประวัติยาที่จ่าย','🔄 ยาที่คืน / เหลือ','💨 ผลประเมินเทคนิคพ่นยา','🚑 จำนวน ER / Admit'].map(t=>`<div style="background:#f8fbff;border-radius:5px;padding:5px 8px;font-size:12px;">${t}</div>`).join('')}
+      </div>
+    </div>
+  </div>
+
+  <!-- Emergency Inhaler -->
+  <div class="card" style="margin-bottom:14px;">
+    <div class="ch"><span class="ct">🚨 บันทึกการใช้ยาพ่นฉุกเฉิน</span></div>
+    <div style="font-size:12.5px;line-height:1.9;margin-top:8px;">
+      <b>วิธีใช้:</b> สแกน QR Code บนสติ๊กเกอร์ หรือเข้าเมนู "ยาพ่นฉุกเฉิน"<br>
+      กรอก: HN · จำนวน Puffs · เหตุผล (PRN / อาการกำเริบ) · ระดับความรุนแรง 1–5<br>
+      <div style="background:#fff5f5;border-radius:7px;padding:8px 12px;margin-top:6px;border-left:3px solid #e53935;font-size:12px;">
+        🚨 ระบบแจ้งเตือนอัตโนมัติถ้าผู้ป่วยใช้ยาฉุกเฉินบ่อยผิดปกติ (alert banner สีแดง)
+      </div>
     </div>
   </div>
 
   <!-- GINA Steps -->
   <div class="card" style="margin-bottom:14px;">
-    <div class="ch"><span class="ct">🌬️ GINA Steps (Asthma 2023)</span></div>
+    <div class="ch"><span class="ct">🌬️ GINA Steps — Asthma 2023</span></div>
     <div style="overflow-x:auto;margin-top:8px;">
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
-        <thead><tr style="background:#f0f4ff;"><th style="padding:6px 8px;">Step</th><th style="padding:6px 8px;text-align:left;">ยา Controller</th><th style="padding:6px 8px;text-align:left;">หมายเหตุ</th></tr></thead>
+        <thead><tr style="background:#f0f4ff;">
+          <th style="padding:7px 10px;text-align:center;">Step</th>
+          <th style="padding:7px 10px;text-align:left;">ยา Controller</th>
+          <th style="padding:7px 10px;text-align:left;">หมายเหตุ</th>
+        </tr></thead>
         <tbody>
-          ${GINA_RECS.map(r=>`<tr style="border-bottom:1px solid var(--bd);"><td style="padding:6px 8px;text-align:center;font-weight:800;color:var(--p);">Step ${r.step}</td><td style="padding:6px 8px;white-space:pre-line;">${r.drugs}</td><td style="padding:6px 8px;color:var(--tm);">${r.note}</td></tr>`).join('')}
+          ${GINA_RECS.map(r=>`<tr style="border-bottom:1px solid var(--bd);">
+            <td style="padding:7px 10px;text-align:center;font-weight:800;color:var(--p);">Step ${r.step}</td>
+            <td style="padding:7px 10px;white-space:pre-line;line-height:1.6;">${r.drugs}</td>
+            <td style="padding:7px 10px;color:var(--tm);font-size:11px;">${r.note}</td>
+          </tr>`).join('')}
         </tbody>
       </table>
     </div>
+    <div style="background:#e8f2fc;border-radius:6px;padding:8px 12px;margin-top:8px;font-size:12px;">💡 ระบบแนะนำ Step Up/Down อัตโนมัติตามคะแนน ACT และ GINA Step ปัจจุบัน</div>
   </div>
 
   <!-- GOLD Groups -->
   <div class="card" style="margin-bottom:14px;">
-    <div class="ch"><span class="ct">🫁 GOLD Groups (COPD 2024)</span></div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:8px;">
+    <div class="ch"><span class="ct">🫁 GOLD Groups — COPD 2024</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px;margin-top:10px;">
       ${Object.entries(GOLD_RECS).map(([k,v])=>`
-        <div style="background:#fff8f0;border:1.5px solid #ffcc80;border-radius:8px;padding:12px;">
-          <div style="font-weight:800;color:#e65100;margin-bottom:4px;">🏷️ GOLD ${v.label}</div>
-          <div style="font-size:12px;font-weight:700;margin-bottom:4px;">${v.treatment}</div>
-          <div style="font-size:11.5px;color:#333;white-space:pre-line;line-height:1.6;">${v.drugs}</div>
-          <div style="font-size:11px;color:#666;margin-top:4px;">📌 ${v.note}</div>
-        </div>`).join('')}
+      <div style="background:#fff8f0;border:1.5px solid #ffcc80;border-radius:8px;padding:12px;">
+        <div style="font-weight:800;color:#e65100;margin-bottom:5px;">🏷️ GOLD ${v.label}</div>
+        <div style="font-size:12.5px;font-weight:700;margin-bottom:4px;">${v.treatment}</div>
+        <div style="font-size:11.5px;color:#333;white-space:pre-line;line-height:1.6;">${v.drugs}</div>
+        <div style="font-size:11px;color:#666;margin-top:5px;">📌 ${v.note}</div>
+      </div>`).join('')}
     </div>
   </div>
 
   <!-- Sticker -->
   <div class="card" style="margin-bottom:14px;">
-    <div class="ch"><span class="ct">🏷️ สติ๊กเกอร์ยาพ่น (5×7 cm)</span></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px;font-size:12.5px;">
-      <div style="background:#fff5f5;border-radius:8px;padding:10px;border:1px solid #ef9a9a;">
-        <div style="font-weight:800;color:#c62828;margin-bottom:6px;">💨 Reliever</div>
-        <div>• ตาราง 20 ช่อง (1 ช่อง = 2 puffs)</div>
-        <div>• QR Code สำหรับบันทึก Emergency Log</div>
-        <div>• ชื่อผู้ป่วย + HN</div>
+    <div class="ch"><span class="ct">🏷️ สติ๊กเกอร์ยาพ่น 70×50mm</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:10px;font-size:12.5px;">
+      <div style="background:#fff5f5;border-radius:8px;padding:12px;border:1px solid #ef9a9a;">
+        <div style="font-weight:800;color:#c62828;margin-bottom:6px;">💨 Reliever (สีแดง)</div>
+        <div>• ตาราง 20 ช่องสำหรับกาแต่ละครั้ง</div>
+        <div>• แต่ละช่อง = จำนวน puffs ที่ใช้</div>
+        <div>• QR Code บันทึกยาฉุกเฉิน</div>
+        <div>• ชื่อ / HN / วันหมด</div>
       </div>
-      <div style="background:#e8f2fc;border-radius:8px;padding:10px;border:1px solid #90caf9;">
-        <div style="font-weight:800;color:var(--pd);margin-bottom:6px;">💊 Controller</div>
-        <div>• วันเปิดใช้ – วันยาหมด (อัตโนมัติ)</div>
-        <div>• วิธีใช้ + วันนัด</div>
-        <div>• QR Code สำหรับดึงข้อมูลผู้ป่วย</div>
+      <div style="background:#e8f2fc;border-radius:8px;padding:12px;border:1px solid #90caf9;">
+        <div style="font-weight:800;color:var(--pd);margin-bottom:6px;">💊 Controller (สีน้ำเงิน)</div>
+        <div>• วันเปิดใช้ → วันยาหมด (อัตโนมัติ)</div>
+        <div>• วิธีใช้ + วันนัดครั้งต่อไป</div>
+        <div>• QR Code ดึงข้อมูลผู้ป่วย</div>
+        <div>• ตัวอักษรใหญ่สำหรับผู้สูงอายุ</div>
       </div>
     </div>
-    <div style="background:#fff3e0;border-radius:6px;padding:8px 12px;margin-top:8px;font-size:12px;">📌 ตั้ง Paper Size = <b>70×50mm</b> (Landscape) ในหน้าต่างพิมพ์</div>
+    <div style="background:#fff3e0;border-radius:6px;padding:8px 12px;margin-top:8px;font-size:12px;">
+      📌 ตั้งค่าหน้าต่างพิมพ์: Paper Size = <b>70×50mm</b> · Orientation = <b>Landscape</b> · Margin = <b>None</b>
+    </div>
+  </div>
+
+  <!-- Import Excel -->
+  <div class="card" style="margin-bottom:14px;">
+    <div class="ch"><span class="ct">📂 นำเข้าข้อมูลจาก Excel</span></div>
+    <div style="font-size:12.5px;line-height:1.9;margin-top:8px;">
+      <b>วิธีใช้:</b> Admin/เภสัช → นำเข้าข้อมูล → ดาวน์โหลด Template → กรอกข้อมูล → อัปโหลด<br>
+      <b>2 โหมด:</b>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;">
+        <div style="background:#f0f4ff;border-radius:7px;padding:8px 12px;">
+          📋 <b>คิววันนี้</b><br>
+          <span style="color:var(--tm);font-size:12px;">นำเข้าผู้ป่วยนัดวันนี้เข้าคิวพยาบาลคัดกรองทันที</span>
+        </div>
+        <div style="background:#f0f4ff;border-radius:7px;padding:8px 12px;">
+          🗄️ <b>ฐานข้อมูล</b><br>
+          <span style="color:var(--tm);font-size:12px;">นำเข้าเป็นข้อมูลผู้ป่วยเท่านั้น ไม่สร้างคิว ใช้ตั้งต้นระบบ</span>
+        </div>
+      </div>
+      <div style="background:#e8f5e9;border-radius:6px;padding:8px 12px;margin-top:8px;font-size:12px;">
+        ✅ Template มีข้อมูลยา Reliever และ Controller — ตอนกรอก HN ในหน้าจ่ายยา ระบบดึงยาและชื่อมาให้อัตโนมัติ
+      </div>
+    </div>
   </div>
 
   <!-- Tech info -->
-  <div class="card" style="margin-bottom:14px;">
+  <div class="card" style="margin-bottom:4px;">
     <div class="ch"><span class="ct">🔧 ข้อมูลทางเทคนิค</span></div>
-    <div style="font-size:12.5px;line-height:2.2;margin-top:4px;">
-      📁 <b>รูปแบบ:</b> Single HTML file — ไม่ต้องติดตั้ง เปิดด้วย Browser ได้เลย<br>
-      💾 <b>จัดเก็บข้อมูล:</b> Browser LocalStorage (ในเครื่อง ไม่ส่งอินเทอร์เน็ต)<br>
-      📶 <b>Offline:</b> ทำงานได้โดยไม่มี Internet (ยกเว้น QR Code image)<br>
-      📤 <b>Backup:</b> Admin → ตั้งค่า → Export JSON สำรองข้อมูล<br>
-      📋 <b>Import:</b> รองรับ Excel (.xlsx) สำหรับข้อมูลผู้ป่วยและยา
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-top:10px;font-size:12px;">
+      ${[
+        ['📁','Single HTML File','ไม่ต้องติดตั้ง เปิดด้วย Browser ได้เลยทุกอุปกรณ์'],
+        ['💾','LocalStorage','ข้อมูลอยู่ในเครื่อง ไม่ส่งอินเทอร์เน็ต'],
+        ['📶','Offline Ready','ทำงานได้ไม่มี Internet (ยกเว้น QR Code image)'],
+        ['📤','Export/Import JSON','Backup ข้อมูลได้ Admin → ตั้งค่า'],
+        ['📊','Chart.js + SheetJS','กราฟ Dashboard + นำเข้า Excel'],
+        ['🔒','Role-based Access','แต่ละ role เห็นเฉพาะส่วนของตัวเอง'],
+      ].map(x=>`
+      <div style="background:#f8fbff;border-radius:7px;padding:10px 12px;display:flex;gap:8px;align-items:flex-start;">
+        <span style="font-size:1.2rem;flex-shrink:0;">${x[0]}</span>
+        <div><div style="font-weight:700;margin-bottom:2px;">${x[1]}</div><div style="color:var(--tm);">${x[2]}</div></div>
+      </div>`).join('')}
     </div>
-    <div style="background:#ffebee;border-radius:6px;padding:8px 12px;margin-top:8px;font-size:12px;color:#c62828;">
-      ⚠️ <b>ข้อควรระวัง:</b> ข้อมูลอยู่ในเครื่องเท่านั้น — ควร Export สำรองก่อนล้างข้อมูล Browser ทุกครั้ง
+    <div style="background:#ffebee;border-radius:6px;padding:8px 12px;margin-top:10px;font-size:12px;color:#c62828;">
+      ⚠️ <b>ข้อควรระวัง:</b> ข้อมูลอยู่ใน Browser ของเครื่องนั้นเท่านั้น ควร Export JSON สำรองข้อมูลสม่ำเสมอ และก่อนล้าง Cache
     </div>
   </div>
+
   </div>`);
 }
 // ==================== HASH ROUTING (QR rescue) ====================
@@ -546,28 +1040,77 @@ function showLogin(role){
   setTimeout(()=>document.getElementById('login-pw').focus(),100);
 }
 function closeLogin(){document.getElementById('pg-login').classList.remove('on');}
-function doLogin(){
+async function doLogin(){
+  const username=(document.getElementById('login-user')?.value||loginTarget).trim();
   const pw=document.getElementById('login-pw').value;
-  if(pw===DB.users[loginTarget]){
-    closeLogin();
-    startApp(loginTarget);
+  const errEl=document.getElementById('login-err');
+  const lockKey=username||loginTarget;
+  const rem=checkLocked(lockKey);
+  if(rem){errEl.innerHTML='<span>🔒 ล็อกชั่วคราว กรุณารอ '+rem+' วินาที</span>';errEl.style.display='flex';return;}
+
+  const hashed=await sha256hex(pw);
+  let matchRole=null,matchUserId=null,matchUserName=null,matchDisplayName=null;
+
+  // 1) Check DB.userAccounts (named users)
+  const acc=(DB.userAccounts||[]).find(u=>u.active&&u.username.toLowerCase()===username.toLowerCase());
+  if(acc){
+    let pwOk=false;
+    if(acc.pwHash.length<40){pwOk=(pw===acc.pwHash);if(pwOk){acc.pwHash=hashed;saveDB();}}
+    else pwOk=(hashed===acc.pwHash);
+    if(pwOk){matchRole=acc.role;matchUserId=acc.id;matchUserName=acc.username;matchDisplayName=acc.name||acc.username;}
+  }
+
+  // 2) Fallback: legacy role password
+  if(!matchRole){
+    const roleTarget=loginTarget||username;
+    const stored=DB.users[roleTarget]||'';
+    let pwOk=false;
+    if(stored.length<40){pwOk=(pw===stored);if(pwOk){DB.users[roleTarget]=hashed;saveDB();}}
+    else pwOk=(hashed===stored);
+    if(pwOk){matchRole=roleTarget;matchUserId='role_'+roleTarget;matchUserName=roleTarget;matchDisplayName={nurse:'พยาบาล',pharmacist:'เภสัชกร',doctor:'แพทย์',admin:'Admin'}[roleTarget]||roleTarget;}
+  }
+
+  if(matchRole){
+    resetAttempts(lockKey);closeLogin();
+    auditLog('LOGIN',matchUserId,matchUserName,'เข้าสู่ระบบ role:'+matchRole);
+    startApp(matchRole,matchUserId,matchDisplayName,matchUserName);
   } else {
-    document.getElementById('login-err').style.display='flex';
+    recordFail(lockKey);
+    const rem2=checkLocked(lockKey);
+    if(rem2)errEl.innerHTML='<span>🔒 ล็อก 5 นาที (ผิดครบ 5 ครั้ง)</span>';
+    else{const left=MAX_ATTEMPTS-(_loginAttempts[lockKey]?.count||0);
+      errEl.innerHTML='<span>❌ ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง (เหลือ '+left+' ครั้ง)</span>';}
+    errEl.style.display='flex';
   }
 }
-function goPublic(){startApp('public');}
+function openLoginFor(role){
+  loginTarget=role;
+  const labels={nurse:'พยาบาล',pharmacist:'เภสัชกร',doctor:'แพทย์',admin:'Admin'};
+  document.getElementById('login-title').textContent='เข้าสู่ระบบ — '+labels[role];
+  document.getElementById('login-sub').textContent='กรอกชื่อผู้ใช้และรหัสผ่าน';
+  document.getElementById('login-user').value=role;
+  document.getElementById('login-pw').value='';
+  document.getElementById('login-err').style.display='none';
+  document.getElementById('pg-login').style.display='flex';
+  setTimeout(()=>document.getElementById('login-user').focus(),100);
+}
+function goPublic(){startApp('public','public','ผู้ป่วย/อสม.','public');}
 function doLogout(){
   SESSION.role=null;
   document.getElementById('app').style.display='none';
   document.getElementById('pg-land').style.display='flex';
 }
-function startApp(role){
+function startApp(role,userId,displayName,userName){
   SESSION.role=role;
+  SESSION.userId=userId||('role_'+role);
+  SESSION.userDisplayName=displayName||role;
+  SESSION.userName=userName||role;
   document.getElementById('pg-land').style.display='none';
   document.getElementById('app').style.display='flex';
-  if(!DB.users.doctor) DB.users.doctor='doctor1234';
+  if(!DB.users.doctor) DB.users.doctor='D1234';
+  migratePasswords();
   const labels={public:'ผู้ป่วย/อสม.',nurse:'พยาบาล',pharmacist:'เภสัชกร',doctor:'แพทย์',admin:'Admin'};
-  document.getElementById('role-badge').textContent=labels[role]||role;
+  document.getElementById('role-badge').textContent=(displayName||labels[role]||role)+(userName&&userName!==role?' ('+userName+')':'');
   buildNav(role);
 }
 
@@ -575,7 +1118,6 @@ function startApp(role){
 const NAVS = {
   public:[
     {id:'assess',label:'📋 แบบประเมิน',fn:'vAssess'},
-    {id:'guide',label:'📖 คู่มือ',fn:'vGuide'},
   ],
   nurse:[
     {id:'nqueue',label:'📥 คิวผู้ป่วย',fn:'vNurseQueue'},
@@ -606,6 +1148,8 @@ const NAVS = {
   admin:[
     {id:'dashboard',label:'📊 Dashboard',fn:'vDash'},
     {id:'patients',label:'👥 ผู้ป่วย',fn:'vPatients'},
+    {id:'useraccts',label:'👤 จัดการผู้ใช้',fn:'vUserAccounts'},
+    {id:'auditlog',label:'📋 Audit Log',fn:'vAuditLog'},
     {id:'assess',label:'📋 แบบประเมิน',fn:'vAssess'},
     {id:'nqueue',label:'📥 คิวพยาบาล',fn:'vNurseQueue'},
     {id:'nverify',label:'✅ ยืนยัน',fn:'vNurseVerify'},
@@ -673,7 +1217,7 @@ function vAssess(){
       <div class="card" style="margin-bottom:12px;">
         <div class="ch"><span class="ct">👤 ข้อมูลผู้ป่วย</span></div>
         <div class="fgrid">
-          <div class="fg"><label>HN *</label><input id="a-hn" placeholder="รหัสผู้ป่วย" oninput="aFillName()"></div>
+          <div class="fg"><label>HN *</label><input id="a-hn" placeholder="รหัสผู้ป่วย" autocomplete="off" oninput="showHNSuggest('a-hn','a-name');aFillName()"></div>
           <div class="fg"><label>ชื่อ-สกุล *</label><input id="a-name" placeholder="ชื่อ นามสกุล"></div>
           <div class="fg"><label>วันที่</label><input type="date" id="a-date" value="${today()}" onchange="syncThaiLabel('a-date')"><div id="a-date-th" style="font-size:12px;color:var(--p);margin-top:3px;font-weight:600;"></div></div>
           <div class="fg"><label>บันทึกโดย</label>
@@ -921,6 +1465,78 @@ function onDxChange(){
   if(sub&&sub.tagName==='P') sub.textContent=`การวินิจฉัย: ${dxLabel} · กรอกข้อมูลอาการใน 4 สัปดาห์ที่ผ่านมา`;
 }
 
+
+// ══════════ HN / Name autocomplete suggest ══════════
+function _hnSugDrop(inputId){
+  return document.getElementById(inputId+'-sug');
+}
+function showHNSuggest(inputId, nameId){
+  const inp=document.getElementById(inputId);
+  if(!inp) return;
+  const q=inp.value.trim();
+  let drop=_hnSugDrop(inputId);
+  if(!drop){
+    drop=document.createElement('div');
+    drop.id=inputId+'-sug';
+    drop.className='hn-suggest';
+    drop.style.display='none';
+    // wrap input in relative container
+    let par=inp.parentElement;
+    if(!par.classList.contains('hn-swrap')){
+      const w=document.createElement('div');
+      w.className='hn-swrap';
+      par.insertBefore(w,inp);
+      w.appendChild(inp);
+      par=w;
+    }
+    par.appendChild(drop);
+    inp.addEventListener('blur',()=>setTimeout(()=>{drop.style.display='none';},160));
+    inp.addEventListener('keydown',e=>{
+      if(e.key==='Escape'){drop.style.display='none';}
+      else if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+        const items=[...drop.querySelectorAll('.si')];
+        const cur=drop.querySelector('.sih');
+        let idx=items.indexOf(cur);
+        items.forEach(i=>i.classList.remove('sih'));
+        if(e.key==='ArrowDown') idx=Math.min(idx+1,items.length-1);
+        else idx=Math.max(idx-1,0);
+        if(items[idx]){items[idx].classList.add('sih');items[idx].scrollIntoView({block:'nearest'});}
+        e.preventDefault();
+      } else if(e.key==='Enter'){
+        const cur=drop.querySelector('.sih');
+        if(cur){cur.dispatchEvent(new MouseEvent('mousedown',{bubbles:true}));e.preventDefault();}
+      }
+    });
+  }
+  if(!q){drop.style.display='none';return;}
+  const res=smartFilter(DB.patients,q,p=>p).slice(0,7);
+  if(!res.length){drop.style.display='none';return;}
+  drop.innerHTML=res.map(p=>{
+    const eHn=encodeURIComponent(p.hn||'');
+    const eNm=encodeURIComponent(p.name||'');
+    const eNid=encodeURIComponent(nameId||'');
+    return `<div class="si" data-hn="${eHn}" data-nm="${eNm}" data-nid="${eNid}" onmousedown="hnSugPickEl(this,'${inputId}')"><span class="si-hn">${p.hn}</span><span class="si-nm">${p.name||''}</span></div>`;
+  }).join('');
+  drop.style.display='block';
+}
+function hnSugPick(inputId,hn,name,nameId){
+  const inp=document.getElementById(inputId);
+  if(inp) inp.value=hn;
+  if(nameId){const n=document.getElementById(nameId);if(n)n.value=name;}
+  const drop=_hnSugDrop(inputId);
+  if(drop) drop.style.display='none';
+  if(inputId==='a-hn') aFillName();
+  else if(inputId==='ph-hn') phFillName();
+  else if(inputId==='rl-hn') rlFillName();
+  else if(inputId==='qr-hn-input') qrSearchPatient();
+}
+function hnSugPickEl(el,inputId){
+  const hn=decodeURIComponent(el.dataset.hn||'');
+  const nm=decodeURIComponent(el.dataset.nm||'');
+  const nid=decodeURIComponent(el.dataset.nid||'');
+  hnSugPick(inputId,hn,nm,nid);
+}
+// ════════════════════════════════════════════════════
 function aFillName(){
   const hn=(document.getElementById('a-hn')||{}).value?.trim();
   const p=DB.patients.find(x=>x.hn===hn);
@@ -1155,9 +1771,9 @@ function vNurseVerify(){
   </div>`);
 }
 function nurseSearch(){
-  const q=(document.getElementById('nv-search')||{}).value?.toLowerCase()||'';
-  if(q.length<2){document.getElementById('nv-results').innerHTML='';return;}
-  const visits=DB.visits.filter(v=>((v.hn||'')+(v.name||'')).toLowerCase().includes(q)).slice(0,8);
+  const q=((document.getElementById('nv-search')||{}).value||'').trim();
+  if(q.length<1){document.getElementById('nv-results').innerHTML='';return;}
+  const visits=smartFilter(DB.visits, q, v=>({hn:v.hn,name:v.name})).slice(0,10);
   document.getElementById('nv-results').innerHTML=visits.map(v=>`
     <div class="qi" onclick="openNurseVerify('${v.id}')">
       <div class="qih"><span><strong>${v.hn}</strong> – ${v.name}</span><span>${fmt(v.date)}</span></div>
@@ -1302,7 +1918,7 @@ function drSearch(){
   const all=q
     ? DB.visits.filter(v=>v.nurseVerified||v.status==='done'||v.status==='pending_pharm')
     : DB.visits.filter(v=>(v.nurseVerified||v.status==='done'||v.status==='pending_pharm')&&v.date===todayStr);
-  const filtered=all.filter(v=>!q||(v.hn+v.name).toLowerCase().includes(q));
+  const filtered=q ? smartFilter(all, q, v=>({hn:v.hn,name:v.name})) : all;
   filtered.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   const label=q?`🔍 ผลการค้นหา "${q}" (${filtered.length} รายการ)`:`📅 ผู้ป่วยวันนี้ (${fmtShort(todayStr)})`;
   document.getElementById('dr-list').innerHTML=`<div style="font-weight:700;font-size:13px;color:var(--pd);margin-bottom:8px;padding-left:2px;">${label}</div>`+
@@ -1542,7 +2158,7 @@ function vPhDisp(){
   <div class="card">
     <div class="ch"><span class="ct">💊 จ่ายยา / คำนวณยาพ่น</span></div>
     <div class="fgrid" style="margin-bottom:14px;">
-      <div class="fg"><label>HN</label><input id="ph-hn" placeholder="HN ผู้ป่วย" oninput="phFillName()"></div>
+      <div class="fg"><label>HN</label><input id="ph-hn" placeholder="HN ผู้ป่วย" autocomplete="off" oninput="showHNSuggest('ph-hn','ph-name');phFillName()"></div>
       <div class="fg"><label>ชื่อ-สกุล</label><input id="ph-name" placeholder="ชื่อ-สกุล"></div>
       <div class="fg"><label>วันที่จ่าย</label><input type="date" id="ph-date" value="${today()}" onchange="syncThaiLabel('ph-date')"><div id="ph-date-th" style="font-size:12px;color:var(--p);margin-top:3px;font-weight:600;"></div></div>
       <div class="fg"><label>วันนัดครั้งถัดไป</label><input type="date" id="ph-next" value="${addDays(today(),90).toISOString().split('T')[0]}" onchange="syncThaiLabel('ph-next')"><div id="ph-next-th" style="font-size:12px;color:var(--p);margin-top:3px;font-weight:600;"></div></div>
@@ -1827,8 +2443,8 @@ function phFillName(){
   const hn=(document.getElementById('ph-hn')||{}).value?.trim();
   if(!hn)return;
   // Search patients first, then visits
-  const p=DB.patients.find(x=>x.hn===hn);
-  const lastVisit=DB.visits.filter(v=>v.hn===hn).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))[0];
+  const p=DB.patients.find(x=>normHN(x.hn)===normHN(hn)||x.hn===hn);
+  const lastVisit=DB.visits.filter(v=>normHN(v.hn)===normHN(hn)||v.hn===hn).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))[0];
   const name=p?.name||lastVisit?.name||'';
   const nameEl=document.getElementById('ph-name');
   if(name&&nameEl&&!nameEl.value)nameEl.value=name;
@@ -2078,6 +2694,7 @@ function saveDispensing(){
       lastEmptyDate,canisters:thisCans
     };
   });
+  alog('DISPENSE','HN:'+hn+' '+name);
   DB.dispensing.push({id:uid(),hn,name,date:document.getElementById('ph-date')?.value||today(),
     nextAppt:document.getElementById('ph-next')?.value||'',drugs,
     noDispense:cResult.noDispAll||false,
@@ -2178,6 +2795,7 @@ function doPrint(type,hn,name,nextAppt){
     <script>window.onload=()=>window.print()<\/script></body></html>`);
 
   } else if(type==='individual'){
+    const rescueQrUrl=window.location.origin+window.location.pathname+'#rescue-'+encodeURIComponent(hn);
     const stickerCSS=`
       @page{size:70mm 50mm;margin:0;}
       *{box-sizing:border-box;}
@@ -2235,7 +2853,7 @@ function doPrint(type,hn,name,nextAppt){
               <span>หมดสติ๊กเกอร์ (${puffsPerSticker} puffs) → ปริ้นต์ใหม่</span>
               <span>หมด: ${fmtShort(c.end)}</span>
             </div>
-            <img class="stk-qr" src="https://api.qrserver.com/v1/create-qr-code/?size=100x100&margin=2&data=HN:${encodeURIComponent(hn)}" alt="QR">
+            <img class="stk-qr" src="${makeQRDataURL(rescueQrUrl,100)}" alt="QR">
           </div>
         </div>`;
       } else {
@@ -2260,7 +2878,7 @@ function doPrint(type,hn,name,nextAppt){
               <span>จ่ายยา: ${fmtShort(new Date())}</span>
               <span>พ่น ${c.dose||2}×${c.freq||2}/วัน = ${(c.dose||2)*(c.freq||2)} puffs/วัน</span>
             </div>
-            <img class="stk-qr" src="https://api.qrserver.com/v1/create-qr-code/?size=100x100&margin=2&data=HN:${encodeURIComponent(hn)}" alt="QR">
+            <img class="stk-qr" src="${makeQRDataURL('HN:'+hn,100)}" alt="QR">
           </div>
         </div>`;
       }
@@ -2295,8 +2913,8 @@ function renderPhHistTable(data){
   </tr>`).join('')}</tbody></table>`;
 }
 function filterPhHist(q){
-  const data=DB.dispensing.filter(d=>!q||(d.hn+d.name).toLowerCase().includes(q.toLowerCase()))
-    .sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const raw=DB.dispensing.slice().sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const data=q ? smartFilter(raw, q, d=>({hn:d.hn,name:d.name})) : raw;
   const b=document.getElementById('ph-hist-body');if(b) b.innerHTML=renderPhHistTable(data);
 }
 function rePrintDisp(id){
@@ -2322,7 +2940,10 @@ function rePrintDisp(id){
     .cell{border:1px solid #e57373;height:8mm;position:relative;font-size:6pt;color:#c62828;display:flex;align-items:flex-end;justify-content:flex-end;padding:0.5mm;background:#fff;}
     .cell-n{font-size:5.5pt;color:#aaa;position:absolute;top:0.5mm;left:0.5mm;}
     .stk-foot{font-size:6.5pt;color:#666;border-top:0.5px solid #ddd;padding:1mm 2.5mm;display:flex;justify-content:space-between;}
+    .stk-qr{width:12mm;height:12mm;display:block;flex-shrink:0;border:0.5px solid #ddd;border-radius:1mm;}
+    .stk-foot-left{display:flex;flex-direction:column;justify-content:center;gap:0.5mm;flex:1;}
   `;
+  const rescueQrUrl2=window.location.origin+window.location.pathname+'#rescue-'+encodeURIComponent(hn);
   const rescueKeywords=['salbutamol','ventolin','berodual','bricanyl','atrovent','ipratropium','saba'];
   function isR(name){const n=(name||'').toLowerCase();return rescueKeywords.some(k=>n.includes(k));}
   const stkHtml=cans.map(c=>{
@@ -2344,9 +2965,12 @@ function rePrintDisp(id){
           <div style="font-size:5.5pt;color:#c62828;margin-bottom:1mm;font-weight:700;">✏️ กาทีละช่อง · 1 ช่อง = ${c.dose||2} puffs สะสม</div>
           <div class="grid">${boxes}</div>
         </div>
-        <div class="stk-foot">
-          <span>ครบ ${20*(c.dose||2)} puffs → ปริ้นต์ใหม่</span>
-          <span>หมด: ${fmtShort(c.end)}</span>
+        <div class="stk-foot" style="align-items:center;gap:1.5mm;">
+          <div class="stk-foot-left">
+            <span>ครบ ${20*(c.dose||2)} puffs → ปริ้นต์ใหม่</span>
+            <span>หมด: ${fmtShort(c.end)}</span>
+          </div>
+          <img class="stk-qr" src="${makeQRDataURL(rescueQrUrl2,100)}" alt="QR">
         </div>
       </div>`;
     } else {
@@ -2418,23 +3042,38 @@ function setImportMode(mode){
 }
 
 function downloadImportGuide(){
-  toast('กรุณาใช้ไฟล์ asthma_import_template.xlsx ที่ได้รับมา หรือดูคอลัมน์ที่ต้องการในตาราง','info');
-  const rows=[
-    ['ว-ค-ป','ชื่อผู้ป่วย','HN','อายุ','การวินิจฉัย','ยาพ่นที่ใช้','วันนัด','Puffs/กระบอก','พ่น/ครั้ง','ครั้ง/วัน','วันคาดว่ายาจะหมด'],
-    ['⚠️ หมายเหตุ: วันที่ใช้รูปแบบ ว/ด/ปป หรือ ว/ด/ปปปป (พ.ศ.) เช่น 1/5/69 | การวินิจฉัย: Asthma / COPD / ACO','','','','','','','','','',''],
-    ['1/5/69','นางสาว สมใจ มีสุข','001234',45,'Asthma','Budesonide 200mcg (Pulmicort)','1/8/69',100,2,2,'20/5/69'],
-    ['1/5/69','นางสาว สมใจ มีสุข','001234',45,'Asthma','Salbutamol MDI 100mcg (Ventolin)','1/8/69',200,2,0,'10/5/69'],
-    ['1/5/69','นาย วิชัย ใจดี','002345',68,'COPD','Tiotropium (Spiriva)','1/8/69',30,1,1,'10/8/69'],
-    ['1/5/69','นาย วิชัย ใจดี','002345',68,'COPD','Salbutamol MDI 100mcg (Ventolin)','1/8/69',200,2,0,'10/5/69'],
-  ];
-  const ws=XLSX.utils.aoa_to_sheet(rows);
-  ws['!cols']=rows[0].map((_,i)=>({wch:[8,22,8,5,15,30,10,10,10,10,12][i]||12}));
-  const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,'นำเข้าข้อมูลผู้ป่วย',ws);
-  XLSX.writeFile(wb,'asthma_import_template.xlsx');
+  // Embedded pre-built template (base64) — works offline & without XLSX CDN
+  const b64='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';
+  try{
+    const bin=atob(b64);
+    const bytes=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+    const blob=new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='asthma_import_template.xlsx';
+    a.click();
+    toast('ดาวน์โหลด template เรียบร้อย ✅');
+  }catch(e){
+    // fallback: generate CSV
+    const csv="ว-ค-ป,ชื่อผู้ป่วย,HN,อายุ,การวินิจฉัย,ยาพ่นที่ใช้,วันนัด,Puffs/กระบอก,พ่น/ครั้ง,ครั้ง/วัน,วันคาดว่ายาจะหมด\n"+
+      "1/5/69,นางสาว สมใจ มีสุข,001234,45,Asthma,Budesonide 200mcg (Pulmicort),1/8/69,100,2,2,20/5/69\n"+
+      "1/5/69,นางสาว สมใจ มีสุข,001234,45,Asthma,Salbutamol MDI 100mcg,1/8/69,200,2,0,10/5/69\n"+
+      "1/5/69,นาย วิชัย ใจดี,002345,68,COPD,Tiotropium (Spiriva),1/8/69,30,1,1,10/8/69\n";
+    const blob=new Blob(['﻿'+csv],{type:'text/csv;charset=utf-8'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='asthma_import_template.csv';
+    a.click();
+    toast('ดาวน์โหลด template (CSV) เรียบร้อย');
+  }
 }
 
 function handleImportFile(input){
+  if(typeof XLSX==='undefined'){
+    toast('ไลบรารี XLSX ยังโหลดไม่เสร็จ กรุณาตรวจสอบการเชื่อมต่ออินเตอร์เน็ต แล้วรีเฟรชหน้า','e');
+    return;
+  }
   const file=input.files[0];
   if(!file){return;}
   const reader=new FileReader();
@@ -2671,7 +3310,7 @@ function vRescueLogForm(hn){
     <div style="background:#fff;border:1px solid #eee;border-radius:0 0 12px 12px;padding:20px;">
       <div style="margin-bottom:14px;">
         <label style="font-weight:600;display:block;margin-bottom:4px;">HN ผู้ป่วย</label>
-        <input id="rl-hn" value="${hn}" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:14px;" placeholder="กรอก HN" oninput="rlFillName()">
+        <input id="rl-hn" value="${hn}" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:14px;" placeholder="กรอก HN" autocomplete="off" oninput="showHNSuggest('rl-hn','');rlFillName()">
       </div>
       <div id="rl-name-row" style="margin-bottom:14px;${patName?'':'display:none'}">
         <label style="font-weight:600;display:block;margin-bottom:4px;">ชื่อ-สกุล</label>
@@ -2927,8 +3566,7 @@ function vRescueHistory(){
       <div style="padding:16px;">
         <div class="fgrid" style="margin-bottom:12px;">
           <div class="fg"><label>เลือกผู้ป่วย (HN)</label>
-            <input id="qr-hn-input" placeholder="พิมพ์ HN หรือชื่อ" oninput="qrSearchPatient()" list="qr-patient-list">
-            <datalist id="qr-patient-list">${DB.patients.map(p=>`<option value="${p.hn}">${p.name}</option>`).join('')}</datalist>
+            <input id="qr-hn-input" placeholder="พิมพ์ HN หรือชื่อ" autocomplete="off" oninput="showHNSuggest('qr-hn-input','');qrSearchPatient()">
           </div>
         </div>
         <div id="qr-result" style="text-align:center;padding:10px;"></div>
@@ -2954,7 +3592,7 @@ function qrSearchPatient(){
   const p=DB.patients.find(x=>x.hn===q||x.name.includes(q));
   if(!p){document.getElementById('qr-result').innerHTML='<div style="color:#888;">ไม่พบผู้ป่วย</div>';return;}
   const url=window.location.origin+window.location.pathname+'#rescue-'+encodeURIComponent(p.hn);
-  const qrUrl='https://api.qrserver.com/v1/create-qr-code/?size=200x200&data='+encodeURIComponent(url);
+  const qrUrl=makeQRDataURL(url,200);
   document.getElementById('qr-result').innerHTML=`
     <div style="font-weight:600;margin-bottom:8px;">${p.hn} – ${p.name}</div>
     <img src="${qrUrl}" style="border:4px solid #e53935;border-radius:8px;" alt="QR">
@@ -3041,6 +3679,7 @@ function vDrugDB(){
           <div class="fg"><label>ชื่อยา *</label><input id="dm-name" placeholder="ชื่อยา (brand)"></div>
           <div class="fg"><label>ขนาด (dose/puff)</label><input id="dm-dose" placeholder="เช่น 100, 160/4.5"></div>
           <div class="fg"><label>Puffs ต่อกระบอก</label><input type="number" id="dm-puffs" value="200" min="1"></div>
+          <div class="fg"><label>ราคาต่อกระบอก (บาท)</label><input type="number" id="dm-price" value="0" min="0" placeholder="ราคา บาท"></div>
           <div class="fg"><label>ประเภท</label>
             <select id="dm-type"><option>SABA</option><option>ICS</option><option>ICS/LABA</option><option>LAMA</option><option>SAMA</option><option>LABA</option><option>Other</option></select>
           </div>
@@ -3090,7 +3729,8 @@ function saveDrug(){
   const obj={id:editDrugId||uid(),name,dose:document.getElementById('dm-dose').value,
     puffs:+document.getElementById('dm-puffs').value,type:document.getElementById('dm-type').value,
     cat:document.getElementById('dm-cat').value,brand:document.getElementById('dm-brand').value,
-    color:document.getElementById('dm-color').value};
+    color:document.getElementById('dm-color').value,
+    price:+document.getElementById('dm-price').value||0};
   if(editDrugId){const i=DB.drugs.findIndex(d=>d.id===editDrugId);if(i>=0)DB.drugs[i]=obj;}
   else DB.drugs.push(obj);
   saveDB();closeDrugModal();
@@ -3107,41 +3747,258 @@ function deleteDrug(id){
 // ---- DASHBOARD ----
 let ch1,ch2;
 function vDash(){
+  // Build summary stats
+  const totalPt=DB.patients.length||[...new Set(DB.visits.map(v=>v.hn))].length;
+  const totalVis=DB.visits.length;
+  const pending=DB.visits.filter(v=>v.status==='pending_nurse'||v.status==='pending_pharm').length;
+  // Controlled = latest visit ACT>=20 or CAT<=10 per patient
+  const ptHNs=[...new Set(DB.visits.map(v=>v.hn))];
+  let ctrl=0,unctrl=0;
+  ptHNs.forEach(hn=>{
+    const vs=DB.visits.filter(v=>v.hn===hn).sort((a,b)=>new Date(b.date||b.createdAt)-new Date(a.date||a.createdAt));
+    const lv=vs[0];if(!lv)return;
+    const act=lv.actScore,cat=lv.catScore;
+    if(act!=null){act>=20?ctrl++:unctrl++;}
+    else if(cat!=null){cat<=10?ctrl++:unctrl++;}
+  });
   setContent(`
+  <!-- KPI Row -->
   <div class="sgrid">
-    <div class="sc"><div class="sv" id="ds-pt">–</div><div class="sl2">👥 ผู้ป่วยทั้งหมด</div></div>
-    <div class="sc g"><div class="sv" id="ds-vis">–</div><div class="sl2">🏥 Visit ทั้งหมด</div></div>
-    <div class="sc o"><div class="sv" id="ds-pend">–</div><div class="sl2">⏳ รอดำเนินการ</div></div>
-    <div class="sc r"><div class="sv" id="ds-unc">–</div><div class="sl2">⚠️ ควบคุมไม่ได้ (ACT≤19)</div></div>
+    <div class="sc"><div class="sv">${totalPt}</div><div class="sl2">👥 ผู้ป่วยทั้งหมด</div></div>
+    <div class="sc g"><div class="sv">${ctrl}</div><div class="sl2">✅ คุมอาการได้</div></div>
+    <div class="sc r"><div class="sv">${unctrl}</div><div class="sl2">⚠️ คุมอาการไม่ได้</div></div>
+    <div class="sc o"><div class="sv">${pending}</div><div class="sl2">⏳ รอดำเนินการ</div></div>
   </div>
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-    <div class="card"><div class="ch"><span class="ct">📈 ACT Score รายเดือน</span></div><div style="height:220px"><canvas id="ch1"></canvas></div></div>
-    <div class="card"><div class="ch"><span class="ct">🫧 Rescue puffs/สัปดาห์</span></div><div style="height:220px"><canvas id="ch2"></canvas></div></div>
+  <!-- Row 1: Controlled/Uncontrolled + ER/Admit -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+    <div class="card"><div class="ch"><span class="ct">📊 คุมอาการได้/ไม่ได้ รายเดือน (%)</span></div>
+      <div style="height:200px;"><canvas id="ch-ctrl"></canvas></div></div>
+    <div class="card"><div class="ch"><span class="ct">🚑 ER Visit / Admit รายเดือน</span></div>
+      <div style="height:200px;"><canvas id="ch-er"></canvas></div></div>
   </div>
+  <!-- Row 2: Drug usage + Age distribution -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+    <div class="card"><div class="ch"><span class="ct">💊 ผู้ป่วยที่ใช้ยาแต่ละตัว (คน)</span></div>
+      <div style="height:220px;"><canvas id="ch-drug"></canvas></div></div>
+    <div class="card"><div class="ch"><span class="ct">👤 ช่วงอายุผู้ป่วย + ยาที่ใช้มากสุด</span></div>
+      <div style="height:220px;"><canvas id="ch-age"></canvas></div>
+      <div id="age-top-drug" style="font-size:11px;margin-top:6px;"></div></div>
+  </div>
+  <!-- Row 3: Cost savings + Technique -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+    <div class="card"><div class="ch"><span class="ct">💰 มูลค่ายาที่ประหยัดได้จากการคืน (บาท/เดือน)</span></div>
+      <div style="height:200px;"><canvas id="ch-save"></canvas></div></div>
+    <div class="card"><div class="ch"><span class="ct">🫁 ผลประเมินเทคนิคพ่นยา</span></div>
+      <div style="height:200px;"><canvas id="ch-tech"></canvas></div>
+      <div id="tech-summary" style="font-size:12px;text-align:center;margin-top:6px;"></div></div>
+  </div>
+  <!-- Row 4: Appointment + Rescue -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+    <div class="card"><div class="ch"><span class="ct">📅 การมาตามนัด vs ขาดนัด</span></div>
+      <div style="height:200px;"><canvas id="ch-appt"></canvas></div></div>
+    <div class="card"><div class="ch"><span class="ct">💨 ปริมาณการใช้ยาพ่นฉุกเฉิน รายเดือน</span></div>
+      <div style="height:200px;"><canvas id="ch-rescue"></canvas></div></div>
+  </div>
+  <!-- Row 5: Returned inhalers detail -->
   <div class="card">
-    <div class="ch"><span class="ct">📋 Visit ล่าสุด</span></div>
-    <div class="tw"><table><thead><tr><th>วันที่</th><th>HN</th><th>ชื่อ</th><th>ACT</th><th>Day</th><th>Night</th><th>Rescue</th><th>Status</th></tr></thead>
-    <tbody>${[...DB.visits].sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt)).slice(0,10).map(v=>`<tr>
-      <td>${fmt(v.date)}</td><td><strong>${v.hn}</strong></td><td>${v.name||'–'}</td>
-      <td><strong>${v.actScore||'–'}</strong></td><td>${v.daytime??'–'}</td><td>${v.nighttime??'–'}</td><td>${v.rescue??'–'}</td>
-      <td><span class="pill ${v.status==='done'?'pg':v.status==='pending_pharm'?'py':'pb'}">${v.status==='done'?'✅ เสร็จ':v.status==='pending_pharm'?'💊 รอเภสัช':'📋 รอพยาบาล'}</span></td>
-    </tr>`).join('')||'<tr><td colspan="8" style="text-align:center;color:var(--tm);">ยังไม่มีข้อมูล</td></tr>'}</tbody></table></div>
+    <div class="ch"><span class="ct">🔄 สรุปยาคืน — รายการและมูลค่า</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+      <div>
+        <div style="font-size:12px;color:var(--tm);margin-bottom:6px;">ยาที่คืนมากที่สุด (กระบอก)</div>
+        <div style="height:180px;"><canvas id="ch-ret-drug"></canvas></div>
+      </div>
+      <div>
+        <div style="font-size:12px;color:var(--tm);margin-bottom:6px;">มูลค่ายาคืนรายเดือน + ตารางสรุป</div>
+        <div id="ret-detail-table" style="font-size:12px;max-height:180px;overflow-y:auto;"></div>
+      </div>
+    </div>
   </div>`);
-  document.getElementById('ds-pt').textContent=DB.patients.length;
-  document.getElementById('ds-vis').textContent=DB.visits.length;
-  document.getElementById('ds-pend').textContent=DB.visits.filter(v=>v.status==='pending_nurse'||v.status==='pending_pharm').length;
-  document.getElementById('ds-unc').textContent=DB.visits.filter(v=>v.actScore&&v.actScore<=19).length;
-  renderCharts();
+  renderDashCharts();
 }
-function getLast6(){const m=[];for(let i=5;i>=0;i--){const d=new Date();d.setMonth(d.getMonth()-i);m.push({y:d.getFullYear(),m:d.getMonth(),lbl:d.toLocaleDateString('th-TH',{month:'short',year:'2-digit'})});}return m;}
-function renderCharts(){
-  const mths=getLast6();
-  const acts=mths.map(m=>{const vs=DB.visits.filter(v=>{if(!v.actScore)return false;const d=new Date(v.date||v.createdAt);return d.getMonth()===m.m&&d.getFullYear()===m.y;});return vs.length?Math.round(vs.reduce((a,v)=>a+v.actScore,0)/vs.length):null;});
-  const resc=mths.map(m=>{const vs=DB.visits.filter(v=>{const d=new Date(v.date||v.createdAt);return d.getMonth()===m.m&&d.getFullYear()===m.y;});return vs.length?Math.round(vs.reduce((a,v)=>a+(v.rescue||0),0)/vs.length):0;});
-  if(ch1)ch1.destroy();if(ch2)ch2.destroy();
-  ch1=new Chart(document.getElementById('ch1').getContext('2d'),{type:'line',data:{labels:mths.map(m=>m.lbl),datasets:[{label:'ACT เฉลี่ย',data:acts,borderColor:'#1a6eb5',backgroundColor:'rgba(26,110,181,.1)',tension:.4,fill:true,pointRadius:4}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{min:5,max:25}},plugins:{legend:{display:false}}}});
-  ch2=new Chart(document.getElementById('ch2').getContext('2d'),{type:'bar',data:{labels:mths.map(m=>m.lbl),datasets:[{label:'Rescue puffs',data:resc,backgroundColor:'rgba(245,124,0,.7)',borderRadius:5}]},options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:true}},plugins:{legend:{display:false}}}});
+
+function getLast12(){
+  const m=[];
+  for(let i=11;i>=0;i--){
+    const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);
+    m.push({y:d.getFullYear(),mo:d.getMonth(),
+      lbl:d.toLocaleDateString('th-TH',{month:'short',year:'2-digit'})});
+  }
+  return m;
 }
+
+// track chart instances
+const _charts={};
+function destroyChart(id){if(_charts[id]){_charts[id].destroy();delete _charts[id];}}
+function mkChart(id,cfg){destroyChart(id);const c=document.getElementById(id);if(!c)return;_charts[id]=new Chart(c.getContext('2d'),cfg);}
+
+function renderDashCharts(){
+  const mths=getLast12();
+  const lbls=mths.map(m=>m.lbl);
+
+  // ── 1. Controlled vs Uncontrolled % per month ──────────────────────────
+  const ctrlPct=[], unctrlPct=[];
+  mths.forEach(m=>{
+    const vs=DB.visits.filter(v=>{const d=new Date(v.date||v.createdAt);return d.getMonth()===m.mo&&d.getFullYear()===m.y;});
+    // one entry per patient (latest in month)
+    const byHN={};
+    vs.forEach(v=>{if(!byHN[v.hn]||new Date(v.date||v.createdAt)>new Date(byHN[v.hn].date||byHN[v.hn].createdAt))byHN[v.hn]=v;});
+    let c=0,u=0;
+    Object.values(byHN).forEach(v=>{
+      const act=v.actScore,cat=v.catScore;
+      if(act!=null){act>=20?c++:u++;}else if(cat!=null){cat<=10?c++:u++;}
+    });
+    const tot=c+u;
+    ctrlPct.push(tot?Math.round(c/tot*100):null);
+    unctrlPct.push(tot?Math.round(u/tot*100):null);
+  });
+  mkChart('ch-ctrl',{type:'bar',data:{labels:lbls,datasets:[
+    {label:'คุมได้ (%)',data:ctrlPct,backgroundColor:'rgba(67,160,71,.75)',borderRadius:4},
+    {label:'คุมไม่ได้ (%)',data:unctrlPct,backgroundColor:'rgba(229,57,53,.65)',borderRadius:4}
+  ]},options:{responsive:true,maintainAspectRatio:false,
+    scales:{y:{min:0,max:100,ticks:{callback:v=>v+'%'}},x:{stacked:false}},
+    plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}}}});
+
+  // ── 2. ER + Admit per month ────────────────────────────────────────────
+  const erData=mths.map(m=>DB.visits.filter(v=>{const d=new Date(v.date||v.createdAt);return d.getMonth()===m.mo&&d.getFullYear()===m.y;}).reduce((s,v)=>s+(v.erCount||0),0));
+  const admData=mths.map(m=>DB.visits.filter(v=>{const d=new Date(v.date||v.createdAt);return d.getMonth()===m.mo&&d.getFullYear()===m.y;}).reduce((s,v)=>s+(v.admitCount||0),0));
+  mkChart('ch-er',{type:'bar',data:{labels:lbls,datasets:[
+    {label:'ER Visit',data:erData,backgroundColor:'rgba(245,124,0,.8)',borderRadius:4},
+    {label:'Admit',data:admData,backgroundColor:'rgba(198,40,40,.75)',borderRadius:4}
+  ]},options:{responsive:true,maintainAspectRatio:false,
+    scales:{y:{beginAtZero:true,ticks:{stepSize:1}}},
+    plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}}}});
+
+  // ── 3. Drug usage – patients currently on each drug ───────────────────
+  const drugCount={};
+  const latestDisp={};
+  DB.dispensing.forEach(d=>{if(!latestDisp[d.hn]||new Date(d.date)>new Date(latestDisp[d.hn].date))latestDisp[d.hn]=d;});
+  Object.values(latestDisp).forEach(d=>{
+    (d.drugs||[]).forEach(dr=>{const n=dr.name||dr.drug||'';if(n){drugCount[n]=(drugCount[n]||0)+1;}});
+  });
+  const drugNames=Object.keys(drugCount).sort((a,b)=>drugCount[b]-drugCount[a]).slice(0,10);
+  const drugVals=drugNames.map(n=>drugCount[n]);
+  const drugColors=drugNames.map((_,i)=>['#1976d2','#388e3c','#7b1fa2','#f57c00','#c62828','#0288d1','#558b2f','#ad1457','#ef6c00','#1565c0'][i%10]);
+  mkChart('ch-drug',{type:'bar',data:{labels:drugNames.map(n=>n.length>22?n.slice(0,20)+'…':n),datasets:[{label:'จำนวนผู้ป่วย',data:drugVals,backgroundColor:drugColors,borderRadius:4}]},
+    options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,
+      scales:{x:{beginAtZero:true,ticks:{stepSize:1}}},
+      plugins:{legend:{display:false}}}});
+
+  // ── 4. Age distribution ───────────────────────────────────────────────
+  const ageBuckets=[{lbl:'<18',min:0,max:17},{lbl:'18–40',min:18,max:40},{lbl:'41–60',min:41,max:60},{lbl:'61–80',min:61,max:80},{lbl:'>80',min:81,max:200}];
+  const ageCount=ageBuckets.map(()=>0);
+  const ageDrugMap=ageBuckets.map(()=>({}));
+  const now=new Date();
+  DB.patients.forEach(p=>{
+    if(!p.dob)return;
+    const age=Math.floor((now-new Date(p.dob))/(365.25*86400000));
+    const bi=ageBuckets.findIndex(b=>age>=b.min&&age<=b.max);
+    if(bi<0)return;
+    ageCount[bi]++;
+    const ld=latestDisp[p.hn];
+    if(ld)(ld.drugs||[]).forEach(dr=>{const n=dr.name||dr.drug||'';if(n)ageDrugMap[bi][n]=(ageDrugMap[bi][n]||0)+1;});
+  });
+  mkChart('ch-age',{type:'bar',data:{labels:ageBuckets.map(b=>b.lbl),datasets:[{label:'จำนวนผู้ป่วย',data:ageCount,backgroundColor:'rgba(25,118,210,.7)',borderRadius:4}]},
+    options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:true,ticks:{stepSize:1}}},plugins:{legend:{display:false}}}});
+  const topEl=document.getElementById('age-top-drug');
+  if(topEl)topEl.innerHTML='<div style="display:flex;flex-wrap:wrap;gap:4px;">'+ageBuckets.map((b,i)=>{
+    const top=Object.entries(ageDrugMap[i]).sort((a,b2)=>b2[1]-a[1])[0];
+    if(!top)return'';
+    const dn=top[0].length>18?top[0].slice(0,16)+'…':top[0];
+    return`<span style="background:#e3f2fd;border-radius:4px;padding:2px 6px;font-size:10px;"><b>${b.lbl}:</b> ${dn}</span>`;
+  }).join('')+'</div>';
+
+  // ── 5. Cost savings from returned inhalers ────────────────────────────
+  function getDrugPrice(nameOrId){
+    const d=DB.drugs.find(x=>x.id===nameOrId||x.name===nameOrId);
+    return d?.price||0;
+  }
+  const savingsData=mths.map(m=>{
+    let tot=0;
+    DB.visits.forEach(v=>{
+      const d=new Date(v.date||v.createdAt);
+      if(d.getMonth()!==m.mo||d.getFullYear()!==m.y)return;
+      (v.returnedInhalers||[]).forEach(r=>{
+        const price=getDrugPrice(r.drugId)||getDrugPrice(r.drugName)||0;
+        tot+=price*(r.qty||1);
+      });
+    });
+    return tot;
+  });
+  const totalSaved=savingsData.reduce((a,b)=>a+b,0);
+  mkChart('ch-save',{type:'bar',data:{labels:lbls,datasets:[{label:'มูลค่า (บาท)',data:savingsData,backgroundColor:'rgba(56,142,60,.75)',borderRadius:4}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      scales:{y:{beginAtZero:true,ticks:{callback:v=>v.toLocaleString()}}},
+      plugins:{legend:{display:false},title:{display:true,text:'รวม: ฿'+totalSaved.toLocaleString(),font:{size:12}}}}});
+
+  // ── 6. Technique assessment: pass vs reassess ─────────────────────────
+  let techPass=0,techFail=0,techTotal=0;
+  DB.visits.forEach(v=>{
+    const ta=v.techAssessment;if(!ta)return;
+    const score=ta.total||ta.score||0;const max=7;
+    techTotal++;
+    score>=5?techPass++:techFail++;
+  });
+  mkChart('ch-tech',{type:'doughnut',data:{labels:['ผ่านประเมิน (≥5/7)','ประเมินซ้ำ (<5/7)'],datasets:[{data:[techPass,techFail],backgroundColor:['rgba(67,160,71,.8)','rgba(229,57,53,.7)'],borderWidth:1}]},
+    options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}}}}});
+  const techEl=document.getElementById('tech-summary');
+  if(techEl)techEl.innerHTML=`รวม ${techTotal} ครั้ง · <b style="color:#43a047">ผ่าน ${techPass}</b> · <b style="color:#e53935">ประเมินซ้ำ ${techFail}</b>`;
+
+  // ── 7. Appointment: attended vs missed (last 12 months) ───────────────
+  let apptKept=0,apptMissed=0;
+  DB.dispensing.forEach(d=>{
+    if(!d.nextAppt)return;
+    const apptDate=new Date(d.nextAppt);
+    // Check if patient has a visit within ±14 days of nextAppt
+    const vis=DB.visits.filter(v=>v.hn===d.hn&&Math.abs(new Date(v.date||v.createdAt)-apptDate)<14*86400000);
+    vis.length>0?apptKept++:apptMissed++;
+  });
+  mkChart('ch-appt',{type:'doughnut',data:{labels:['มาตามนัด','ขาดนัด'],datasets:[{data:[apptKept,apptMissed],backgroundColor:['rgba(25,118,210,.8)','rgba(245,124,0,.75)'],borderWidth:1}]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom',labels:{boxWidth:12,font:{size:11}}},
+        title:{display:true,text:`รวม ${apptKept+apptMissed} ครั้ง · ขาดนัด ${apptMissed}`,font:{size:11}}}}});
+
+  // ── 8. Emergency rescue per month (puffs) ────────────────────────────
+  const rescData=mths.map(m=>(DB.rescueLog||[]).filter(r=>{const d=new Date(r.recordedAt);return d.getMonth()===m.mo&&d.getFullYear()===m.y;}).reduce((s,r)=>s+(r.puffs||0),0));
+  mkChart('ch-rescue',{type:'bar',data:{labels:lbls,datasets:[{label:'puffs',data:rescData,backgroundColor:'rgba(229,57,53,.7)',borderRadius:4}]},
+    options:{responsive:true,maintainAspectRatio:false,scales:{y:{beginAtZero:true}},plugins:{legend:{display:false}}}});
+
+  // ── 9. Returned inhalers: by drug name (qty) ─────────────────────────
+  const retByDrug={};
+  const retRows=[];
+  DB.visits.forEach(v=>{
+    (v.returnedInhalers||[]).forEach(r=>{
+      const n=r.drugName||'ไม่ระบุ';
+      const price=getDrugPrice(r.drugId)||getDrugPrice(n)||0;
+      const qty=r.qty||1;
+      if(!retByDrug[n])retByDrug[n]={qty:0,value:0};
+      retByDrug[n].qty+=qty;retByDrug[n].value+=qty*price;
+      retRows.push({date:v.date,name:n,qty,value:qty*price});
+    });
+  });
+  retRows.sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const retDrugNames=Object.keys(retByDrug).sort((a,b)=>retByDrug[b].qty-retByDrug[a].qty).slice(0,8);
+  const retDrugQtys=retDrugNames.map(n=>retByDrug[n].qty);
+  const retDrugVals=retDrugNames.map(n=>retByDrug[n].value);
+  mkChart('ch-ret-drug',{type:'bar',data:{labels:retDrugNames.map(n=>n.length>18?n.slice(0,16)+'…':n),datasets:[
+    {label:'กระบอก',data:retDrugQtys,backgroundColor:'rgba(56,142,60,.75)',borderRadius:4,yAxisID:'y'},
+    {label:'มูลค่า (฿)',data:retDrugVals,backgroundColor:'rgba(25,118,210,.5)',borderRadius:4,yAxisID:'y2'}
+  ]},options:{responsive:true,maintainAspectRatio:false,
+    scales:{y:{beginAtZero:true,title:{display:true,text:'กระบอก'}},y2:{beginAtZero:true,position:'right',title:{display:true,text:'฿'},grid:{drawOnChartArea:false}}},
+    plugins:{legend:{position:'bottom',labels:{boxWidth:10,font:{size:10}}}}}});
+
+  const retTbl=document.getElementById('ret-detail-table');
+  if(retTbl){
+    const totalQ=retRows.reduce((s,r)=>s+r.qty,0);
+    const totalV=retRows.reduce((s,r)=>s+r.value,0);
+    if(!retRows.length){retTbl.innerHTML='<div style="color:var(--tm);text-align:center;padding:20px;">ยังไม่มีรายการคืนยา</div>';}
+    else{retTbl.innerHTML=`<div style="background:#e8f5e9;border-radius:6px;padding:6px 10px;margin-bottom:6px;font-weight:700;color:#2e7d32;">รวม ${totalQ} กระบอก${totalV?` · ฿${totalV.toLocaleString()}`:''}  (${retRows.length} รายการ)</div>
+    <table style="width:100%;border-collapse:collapse;">
+      <thead><tr style="background:#f1f8e9;font-size:11px;"><th style="padding:4px 6px;text-align:left;">วันที่</th><th style="padding:4px 6px;text-align:left;">ยา</th><th style="padding:4px 6px;text-align:center;">จำนวน</th><th style="padding:4px 6px;text-align:right;">มูลค่า</th></tr></thead>
+      <tbody>${retRows.slice(0,50).map(r=>`<tr style="border-bottom:1px solid #f0f0f0;"><td style="padding:3px 6px;font-size:11px;">${fmtShort(r.date)}</td><td style="padding:3px 6px;font-size:11px;">${r.name.length>20?r.name.slice(0,18)+'…':r.name}</td><td style="padding:3px 6px;text-align:center;font-size:11px;">${r.qty}</td><td style="padding:3px 6px;text-align:right;font-size:11px;">${r.value?'฿'+r.value.toLocaleString():'–'}</td></tr>`).join('')}</tbody>
+    </table>`;}
+  }
+}
+
 
 // ---- PATIENTS ----
 function vPatients(){
@@ -3154,7 +4011,7 @@ function vPatients(){
   <div class="mo" id="pt-modal">
     <div class="mb"><div class="mh"><h3>เพิ่มผู้ป่วย</h3><button class="mx" onclick="document.getElementById('pt-modal').classList.remove('on')">×</button></div>
     <div class="mc"><div class="fgrid">
-      <div class="fg"><label>HN *</label><input id="pt-hn"></div>
+      <div class="fg"><label>HN *</label><input id="pt-hn" autocomplete="off" oninput="showHNSuggest('pt-hn','pt-name')"></div>
       <div class="fg"><label>ชื่อ-สกุล *</label><input id="pt-name"></div>
       <div class="fg"><label>วันเกิด</label><input type="date" id="pt-dob"></div>
       <div class="fg"><label>เพศ</label><select id="pt-sex"><option>ชาย</option><option>หญิง</option></select></div>
@@ -3175,7 +4032,62 @@ function renderPtTable(pts){
     <td><button class="btn bp bsm" onclick="openPhDisp('${p.hn}','')">💊 จ่ายยา</button></td></tr>`;}).join('')}
   </tbody></table>`;
 }
-function filterPt(q){const b=document.getElementById('pt-body');if(!b)return;b.innerHTML=renderPtTable(DB.patients.filter(p=>!q||(p.hn+p.name).toLowerCase().includes(q.toLowerCase())));}
+
+// ===== SMART PATIENT SEARCH =====
+function normHN(hn){ return (hn||'').trim().replace(/^0+/,'').toLowerCase(); }
+function smartPtScore(item, rawQ){
+  if(!rawQ) return 1;
+  const q = rawQ.trim().toLowerCase();
+  const qhn = normHN(q);
+  const hn = (item.hn||'').toLowerCase();
+  const hnn = normHN(item.hn);
+  const name = (item.name||'').toLowerCase();
+  // HN exact / starts / contains (normalized)
+  if(hnn && qhn && hnn === qhn) return 100;
+  if(hnn && qhn && hnn.startsWith(qhn)) return 90;
+  if(hnn && qhn && hnn.includes(qhn)) return 80;
+  if(hn.includes(q)) return 75;
+  // Name exact / starts / contains
+  if(name === q) return 70;
+  if(name.startsWith(q)) return 65;
+  if(name.includes(q)) return 60;
+  // Word-level partial (Thai/space-separated)
+  const qparts = q.split(/\s+/).filter(Boolean);
+  if(qparts.length > 1){
+    const matched = qparts.filter(p=>name.includes(p)||hnn.includes(p)).length;
+    if(matched > 0) return 40 + matched*8;
+  }
+  // Single word partial in name
+  if(q.length >= 2){
+    const parts = name.split(/\s+/);
+    for(const p of parts){ if(p.includes(q)||q.includes(p)&&p.length>=2) return 35; }
+  }
+  // Character overlap fuzzy (>=60% overlap → show as similar)
+  let hits=0;
+  for(const c of q){ if(name.includes(c)) hits++; }
+  const ratio = hits/q.length;
+  if(ratio >= 0.6) return Math.round(ratio*30);
+  return 0;
+}
+function smartFilter(list, q, getItem){
+  // getItem(x) returns {hn, name}
+  if(!q) return list;
+  const scored = list.map(x=>({x, score: smartPtScore(getItem(x), q)}))
+                     .filter(s=>s.score>0)
+                     .sort((a,b)=>b.score-a.score);
+  return scored.map(s=>s.x);
+}
+// ===== END SMART SEARCH =====
+function filterPt(q){
+  const b=document.getElementById('pt-body');if(!b)return;
+  const res=smartFilter(DB.patients, q, p=>p);
+  if(!q) { b.innerHTML=renderPtTable(DB.patients); return; }
+  if(!res.length){
+    b.innerHTML='<div style="text-align:center;padding:20px;color:var(--tm);">ไม่พบผู้ป่วย — ลองค้นหาด้วย HN หรือชื่อ</div>';
+  } else {
+    b.innerHTML=renderPtTable(res);
+  }
+}
 function openAddPt(){document.getElementById('pt-modal').classList.add('on');}
 function addPt(){
   const hn=document.getElementById('pt-hn').value.trim();const name=document.getElementById('pt-name').value.trim();
