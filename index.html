@@ -228,7 +228,7 @@ tr:hover td{background:#f8fbff;}
     </div>
     <div class="tb-right">
       <span style="font-size:12px;color:rgba(255,255,255,.7);" id="tb-date"></span>
-      <button class="btn-logout" onclick="doLogout()">ออกจากระบบ</button>
+      <button class="btn-logout" onclick="if(confirm('ออกจากระบบ? \nจะล้างการจำ login ในเครื่องนี้ด้วย'))doLogout()">ออกจากระบบ</button>
     </div>
   </div>
   <div id="tabnav"></div>
@@ -368,6 +368,8 @@ function makeQRDataURL(text,sizePx){
 
 // ==================== DATA ====================
 const SK = 'asthma_v2';
+const SESS_KEY='asthma_v2_sess';
+const SESS_DAYS=30;
 let DB = {patients:[],visits:[],dispensing:[],drugs:[],
   users:{nurse:'N1234',pharmacist:'P1234',admin:'admin11091'},
   userAccounts:[],auditLog:[],pwVersion:0};
@@ -1032,6 +1034,22 @@ function handleHash(){
   }
 }
 window.addEventListener('hashchange',handleHash);
+
+// ── Auto-login from saved session ──
+(function tryAutoLogin(){
+  try{
+    const s=JSON.parse(localStorage.getItem(SESS_KEY)||'null');
+    if(!s||!s.role||!s.exp||Date.now()>s.exp){
+      if(s)localStorage.removeItem(SESS_KEY);
+      return;
+    }
+    if(s.exp-Date.now()<7*86400000){
+      s.exp=Date.now()+SESS_DAYS*86400000;
+      localStorage.setItem(SESS_KEY,JSON.stringify(s));
+    }
+    startApp(s.role,s.userId,s.displayName,s.userName);
+  }catch(e){}
+})();
 window.addEventListener('load',()=>{if(location.hash.startsWith('#rescue-'))handleHash();});
 
 // ==================== AUTH ====================
@@ -1080,6 +1098,10 @@ async function doLogin(){
   if(matchRole){
     resetAttempts(lockKey);closeLogin();
     auditLog('LOGIN',matchUserId,matchUserName,'เข้าสู่ระบบ role:'+matchRole);
+    const remChk=document.getElementById('login-remember');
+    if(remChk&&remChk.checked){
+      try{localStorage.setItem(SESS_KEY,JSON.stringify({role:matchRole,userId:matchUserId,userName:matchUserName,displayName:matchDisplayName,exp:Date.now()+SESS_DAYS*86400000}));}catch(e){}
+    }
     startApp(matchRole,matchUserId,matchDisplayName,matchUserName);
   } else {
     recordFail(lockKey);
@@ -1104,6 +1126,7 @@ function openLoginFor(role){
 function goPublic(){startApp('public','public','ผู้ป่วย/อสม.','public');}
 function doLogout(){
   SESSION.role=null;
+  try{localStorage.removeItem(SESS_KEY);}catch(e){}
   document.getElementById('app').style.display='none';
   document.getElementById('pg-land').style.display='flex';
 }
