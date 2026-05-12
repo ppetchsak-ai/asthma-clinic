@@ -153,6 +153,23 @@ tr:hover td{background:#f8fbff;}
 /* ---- RESPONSIVE ---- */
 @media(max-width:600px){.fgrid{grid-template-columns:1fr;}.sgrid{grid-template-columns:1fr 1fr;}}
 
+/* ── Drug multi-select dropdown ── */
+.drug-ms-wrap{position:relative;}
+.drug-ms-box{display:flex;align-items:center;flex-wrap:wrap;gap:5px;min-height:36px;padding:5px 10px;border:1.5px solid var(--bd);border-radius:7px;cursor:pointer;background:#fff;font-size:13px;}
+.drug-ms-box:hover{border-color:var(--p);}
+.drug-ms-ph{color:#aaa;font-size:13px;}
+.drug-tag{display:inline-flex;align-items:center;gap:4px;background:#e3f0ff;color:#1565c0;border-radius:10px;padding:2px 8px;font-size:12px;font-weight:600;}
+.drug-tag .dx{cursor:pointer;color:#888;font-size:13px;line-height:1;}
+.drug-tag .dx:hover{color:#c62828;}
+.drug-ms-menu{position:absolute;left:0;top:100%;z-index:9998;background:#fff;border:1.5px solid var(--p);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);min-width:100%;max-height:220px;overflow-y:auto;margin-top:3px;}
+.drug-ms-menu .dmi{display:flex;align-items:center;gap:8px;padding:8px 13px;cursor:pointer;font-size:13px;border-bottom:1px solid #f0f0f0;transition:.12s;}
+.drug-ms-menu .dmi:last-child{border-bottom:none;}
+.drug-ms-menu .dmi:hover{background:#f0f7ff;}
+.drug-ms-menu .dmi.sel{background:#e8f5e9;}
+.drug-ms-menu .dmi input[type=checkbox]{accent-color:var(--p);width:15px;height:15px;flex-shrink:0;}
+.drug-ms-menu .dmi .dn{flex:1;}
+.drug-ms-menu .dmi .dt{font-size:11px;color:var(--tm);background:#f5f5f5;border-radius:4px;padding:1px 6px;}
+
 /* ── HN autocomplete suggest ── */
 .hn-swrap{position:relative;display:block;}
 .hn-suggest{position:absolute;left:0;top:100%;z-index:9999;background:#fff;border:1.5px solid #1976d2;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);max-height:230px;overflow-y:auto;min-width:100%;margin-top:2px;font-size:13px;}
@@ -228,6 +245,7 @@ tr:hover td{background:#f8fbff;}
     </div>
     <div class="tb-right">
       <span style="font-size:12px;color:rgba(255,255,255,.7);" id="tb-date"></span>
+      <span id="sync-status" style="font-size:11px;padding:3px 8px;border-radius:8px;background:rgba(255,255,255,.1);"></span>
       <button class="btn-logout" onclick="if(confirm('ออกจากระบบ? \nจะล้างการจำ login ในเครื่องนี้ด้วย'))doLogout()">ออกจากระบบ</button>
     </div>
   </div>
@@ -370,6 +388,8 @@ function makeQRDataURL(text,sizePx){
 const SK = 'asthma_v2';
 const SESS_KEY='asthma_v2_sess';
 const SESS_DAYS=30;
+const SYNC_CFG_KEY='asthma_v2_sync';
+let SYNC={url:'',secret:'',autoSync:false,lastSync:null,status:'idle'};
 let DB = {patients:[],visits:[],dispensing:[],drugs:[],
   users:{nurse:'N1234',pharmacist:'P1234',admin:'admin11091'},
   userAccounts:[],auditLog:[],pwVersion:0};
@@ -377,7 +397,73 @@ let SESSION = {role:null, userId:null, userName:null, userDisplayName:null};
 let loginTarget = '';
 
 function loadDB(){try{const d=localStorage.getItem(SK);if(d)DB=JSON.parse(d);}catch(e){}}
-function saveDB(){try{localStorage.setItem(SK,JSON.stringify(DB));}catch(e){}}
+function saveDB(){
+  try{localStorage.setItem(SK,JSON.stringify(DB));}catch(e){}
+  if(SYNC.url) pushToCloud();
+}
+function loadSyncCfg(){
+  try{const c=JSON.parse(localStorage.getItem(SYNC_CFG_KEY)||'{}');
+    SYNC.url=c.url||'';SYNC.secret=c.secret||'';SYNC.autoSync=c.autoSync||false;SYNC.lastSync=c.lastSync||null;
+  }catch(e){}
+}
+function saveSyncCfg(){
+  try{localStorage.setItem(SYNC_CFG_KEY,JSON.stringify({url:SYNC.url,secret:SYNC.secret,autoSync:SYNC.autoSync,lastSync:SYNC.lastSync}));}catch(e){}
+}
+function syncUrl(){
+  let u=SYNC.url.trim();
+  if(!u) return null;
+  if(!u.endsWith('.json')) u=u.replace(/\/+$/,'')+'/asthmadb.json';
+  if(SYNC.secret) u+='?auth='+encodeURIComponent(SYNC.secret);
+  return u;
+}
+async function pushToCloud(){
+  const u=syncUrl(); if(!u) return;
+  setSyncStatus('saving');
+  try{
+    const r=await fetch(u,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(DB)});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    SYNC.lastSync=new Date().toISOString();
+    saveSyncCfg();
+    setSyncStatus('ok');
+  }catch(e){setSyncStatus('err',e.message);}
+}
+async function pullFromCloud(silent){
+  const u=syncUrl(); if(!u) return false;
+  if(!silent) setSyncStatus('loading');
+  try{
+    const r=await fetch(u);
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const remote=await r.json();
+    if(remote&&remote.patients){
+      DB=remote;
+      localStorage.setItem(SK,JSON.stringify(DB));
+      SYNC.lastSync=new Date().toISOString();
+      saveSyncCfg();
+      setSyncStatus('ok');
+      return true;
+    }
+    setSyncStatus('ok');
+    return false;
+  }catch(e){setSyncStatus('err',e.message);return false;}
+}
+function setSyncStatus(s,msg){
+  SYNC.status=s;
+  const el=document.getElementById('sync-status');
+  if(!el) return;
+  const map={idle:'',saving:'⬆️ กำลังบันทึก...',loading:'⬇️ กำลังโหลด...',ok:'☁️ ซิงค์แล้ว',err:'❌ ซิงค์ล้มเหลว'+(msg?' ('+msg+')':'')};
+  el.textContent=map[s]||'';
+  el.style.color=s==='err'?'#ffcdd2':s==='ok'?'#c8e6c9':'#fff9c4';
+}
+let _autoSyncTimer=null;
+function startAutoSync(){
+  if(_autoSyncTimer) clearInterval(_autoSyncTimer);
+  if(SYNC.autoSync&&SYNC.url){
+    _autoSyncTimer=setInterval(()=>pullFromCloud(true).then(changed=>{if(changed&&SESSION.role)refreshCurrentView();}),30000);
+  }
+}
+function refreshCurrentView(){
+  try{const tnOn=document.querySelector('.tnav.on');if(tnOn)tnOn.click();}catch(e){}
+}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
 function today(){return new Date().toISOString().split('T')[0];}
 function fmt(d){if(!d)return'–';const dt=new Date(d);if(isNaN(dt))return'–';const dd=String(dt.getDate()).padStart(2,'0');const mm=String(dt.getMonth()+1).padStart(2,'0');const yy=dt.getFullYear()+543;return`${dd}/${mm}/${yy}`;}
@@ -1035,6 +1121,8 @@ function handleHash(){
 }
 window.addEventListener('hashchange',handleHash);
 
+// ── Load sync config ──
+loadSyncCfg();
 // ── Auto-login from saved session ──
 (function tryAutoLogin(){
   try{
@@ -1047,7 +1135,12 @@ window.addEventListener('hashchange',handleHash);
       s.exp=Date.now()+SESS_DAYS*86400000;
       localStorage.setItem(SESS_KEY,JSON.stringify(s));
     }
-    startApp(s.role,s.userId,s.displayName,s.userName);
+    // pull cloud data first, then start
+    if(SYNC.url){
+      pullFromCloud(true).then(()=>{startApp(s.role,s.userId,s.displayName,s.userName);});
+    } else {
+      startApp(s.role,s.userId,s.displayName,s.userName);
+    }
   }catch(e){}
 })();
 window.addEventListener('load',()=>{if(location.hash.startsWith('#rescue-'))handleHash();});
@@ -1102,7 +1195,11 @@ async function doLogin(){
     if(remChk&&remChk.checked){
       try{localStorage.setItem(SESS_KEY,JSON.stringify({role:matchRole,userId:matchUserId,userName:matchUserName,displayName:matchDisplayName,exp:Date.now()+SESS_DAYS*86400000}));}catch(e){}
     }
-    startApp(matchRole,matchUserId,matchDisplayName,matchUserName);
+    if(SYNC.url){
+      pullFromCloud(true).then(()=>{startApp(matchRole,matchUserId,matchDisplayName,matchUserName);startAutoSync();});
+    } else {
+      startApp(matchRole,matchUserId,matchDisplayName,matchUserName);
+    }
   } else {
     recordFail(lockKey);
     const rem2=checkLocked(lockKey);
@@ -1293,7 +1390,7 @@ function vAssess(){
         </div>
       </div>
       <div style="text-align:right;padding-bottom:6px;">
-        <button class="btn bs" onclick="assessTab(2)">ถัดไป → แบบประเมิน</button>
+        <button class="btn bs" onclick="assessTabNext()">ถัดไป → แบบประเมิน</button>
       </div>
     </div>
 
@@ -1319,6 +1416,9 @@ function vAssess(){
 
     <!-- TAB 3: การใช้ยา -->
     <div class="atab-panel" id="assess-t3">
+      <div id="skip-assess-info" style="display:none;background:#e8f5e9;border:1.5px solid #a5d6a7;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;">
+        ✅ <b>อาการหอบน้อย</b> — ข้ามแบบประเมิน ACT/CAT (หอบ &lt; 2 ครั้ง/สัปดาห์ ไม่มี ER/Admit) → ส่งคิวปกติ (สีเขียว)
+      </div>
       <div class="card" id="adh-card" style="display:none;margin-bottom:12px;">
         <div class="ch"><span class="ct">💊 ประเมิน Adherence (MMAS-4)</span><span class="pill pr">หอบ ≥2 ครั้ง/สัปดาห์</span></div>
         <div class="al alw"><span>⚠️</span><span>ตรวจพบอาการหอบบ่อย กรุณาตอบคำถามการใช้ยา</span></div>
@@ -1329,7 +1429,7 @@ function vAssess(){
         <div class="fg"><textarea id="a-notes" placeholder="อาการอื่นๆ หรือสิ่งที่ต้องการแจ้งแพทย์/พยาบาล..."></textarea></div>
       </div>
       <div style="display:flex;justify-content:space-between;padding-bottom:6px;">
-        <button class="btn bo" onclick="assessTab(2)">← ย้อนกลับ</button>
+        <button class="btn bo" onclick="assessTab(2);(document.getElementById('skip-assess-info')||{}).style&&(document.getElementById('skip-assess-info').style.display='none')">← ย้อนกลับ</button>
         <button class="btn bs" style="font-size:15px;padding:12px 32px;" onclick="submitAssess()">✅ ส่งข้อมูล</button>
       </div>
     </div>
@@ -1358,6 +1458,26 @@ function assessTab(n){
     if(b) b.classList.toggle('on',i===n);
   });
   window.scrollTo({top:0,behavior:'smooth'});
+}
+function needsFullAssess(){
+  const day=+(document.getElementById('a-day')?.value||0);
+  const night=+(document.getElementById('a-night')?.value||0);
+  const er=+(document.getElementById('a-er')?.value||0);
+  const admit=+(document.getElementById('a-admit')?.value||0);
+  return (day+night>=2)||(er>=1)||(admit>=1);
+}
+function assessTabNext(){
+  if(needsFullAssess()){
+    assessTab(2); // show ACT/assessment
+  } else {
+    // ข้ามแบบประเมิน — ส่งตรงไปหน้าบันทึก
+    assessTab(3);
+    // show info banner
+    const t2=document.getElementById('assess-t2');
+    if(t2){t2.classList.remove('on');}
+    const info=document.getElementById('skip-assess-info');
+    if(info) info.style.display='block';
+  }
 }
 
 const ACT_Q=[
@@ -1618,6 +1738,7 @@ function submitAssess(){
     adherenceScore:(day+night>=2)?adh:null,
     notes:document.getElementById('a-notes').value,
     status:'pending_nurse',
+    wheezeHigh:(+(document.getElementById('a-day').value||0)+ +(document.getElementById('a-night').value||0)>=2)||(+(document.getElementById('a-er').value||0)>=1)||(+(document.getElementById('a-admit').value||0)>=1),
     createdAt:new Date().toISOString()
   };
   const _dxVal=document.getElementById('a-dx')?.value||'Asthma';
@@ -1741,6 +1862,38 @@ function scoreLabel(v){
   return parts.length?parts.join(' · '):'–';
 }
 // ---- NURSE QUEUE ----
+
+// ── Assessment summary card helper ─────────────────────────────────────────
+function assessSummaryHTML(v){
+  if(!v) return '';
+  const day=v.daytime??null; const night=v.nighttime??null;
+  const er=v.erCount??0; const admit=v.admitCount??0;
+  const rescue=v.rescue??null;
+  const hasData=(day!==null||v.actScore||v.catScore);
+  if(!hasData) return '';
+  const isHigh=v.wheezeHigh||(day!=null&&night!=null&&(day+night)>=2)||(er>=1)||(admit>=1);
+  const bg=isHigh?'#fff3f3':'#f0fff4';
+  const border=isHigh?'#ffcdd2':'#a5d6a7';
+  const icon=isHigh?'🔴':'🟢';
+  let rows=[];
+  if(day!==null) rows.push(`หอบกลางวัน: <b>${day}</b> ครั้ง/สัปดาห์`);
+  if(night!==null) rows.push(`กลางคืน: <b>${night}</b> ครั้ง`);
+  if(rescue!==null) rows.push(`Reliever: <b>${rescue}</b> puffs/สัปดาห์`);
+  if(er) rows.push(`ER: <b>${er}</b> ครั้ง`);
+  if(admit) rows.push(`Admit: <b>${admit}</b> ครั้ง`);
+  if(v.actScore) rows.push(`ACT: <b>${v.actScore}</b>/25`);
+  if(v.catScore) rows.push(`CAT: <b>${v.catScore}</b>/40`);
+  if(v.adherenceScore!=null) rows.push(`Adherence: <b>${v.adherenceScore}</b>/4`);
+  const rLeft=v.rescueLeft;
+  const rLabel=rLeft==='yes'?'💊 มียาเหลือ':rLeft==='no'?'❌ ยาหมด':rLeft==='almost'?'⚠️ เกือบหมด':'';
+  if(rLabel) rows.push(rLabel);
+  return `<div style="background:${bg};border:1.5px solid ${border};border-radius:7px;padding:8px 12px;margin-top:6px;font-size:12px;line-height:1.8;">
+    <div style="font-weight:700;margin-bottom:3px;">${icon} ผลประเมินล่าสุด${isHigh?' — <span style=\"color:#c62828;\">⚠️ หอบบ่อย/ER</span>':' — <span style=\"color:#2e7d32;\">อาการน้อย</span>'}</div>
+    ${rows.join(' · ')}
+    ${v.notes?`<div style="color:#555;margin-top:3px;">📝 ${v.notes}</div>`:''}
+  </div>`;
+}
+// ───────────────────────────────────────────────────────────────────────────
 function vNurseQueue(){
   const pending=DB.visits.filter(v=>v.status==='pending_nurse').sort((a,b)=>new Date(a.createdAt)-new Date(b.createdAt));
   // For imported patients: check if they already submitted self-assessment
@@ -1764,13 +1917,17 @@ function vNurseQueue(){
     pending.map(v=>{
       const assessed=hasSelfAssess(v.hn);
       const isImport=v.type==='import_queue';
-      return`<div class="qi" onclick="openNurseVerify('${v.id}')">
+      const nhigh=v.wheezeHigh||(((v.daytime||0)+(v.nighttime||0))>=2)||((v.erCount||0)>=1)||((v.admitCount||0)>=1);
+      return`<div class="qi" onclick="openNurseVerify('${v.id}')" style="border-left:4px solid ${nhigh?'#c62828':'#2e7d32'};">
         <div class="qih">
           <span><strong>${v.hn}</strong> – ${v.name}
-            ${isImport?'<span class="pill pb" style="font-size:10px;margin-left:4px;">📋 นัดวันนี้</span>':''}</span>
+            ${isImport?'<span class="pill pb" style="font-size:10px;margin-left:4px;">📋 นัดวันนี้</span>':''}
+            ${nhigh?'<span class="pill pr" style="font-size:10px;margin-left:4px;">🔴 หอบบ่อย/ER</span>':'<span class="pill pg" style="font-size:10px;margin-left:4px;">🟢 อาการน้อย</span>'}
+          </span>
           <span>${assessed?'<span class="pill pg" style="font-size:10px;">✅ ส่งแบบประเมินแล้ว</span>':'<span class="pill py" style="font-size:10px;">⏳ ยังไม่ประเมิน</span>'}</span>
         </div>
         <div style="font-size:12px;color:var(--tm);">📅 ${fmt(v.date)} · ACT: ${v.actScore||'–'} · หอบ: ${v.daytime||0}/${v.nighttime||0} · บันทึกโดย: ${v.by==='nurse'?'พยาบาล'+(v.nurseName?' ('+v.nurseName+')':''):v.by||'ผู้ป่วย'}</div>
+        ${assessSummaryHTML(v)}
       </div>`;}).join('')}
   </div>`);
 }
@@ -1827,9 +1984,13 @@ function openNurseVerify(vid){
   }
   const form=document.getElementById('nv-form');if(!form)return;
   form.style.display='block';
+  const nvHigh=v.wheezeHigh||(((v.daytime||0)+(v.nighttime||0))>=2)||((v.erCount||0)>=1)||((v.admitCount||0)>=1);
   form.innerHTML=`
     <hr style="margin:14px 0;border-color:var(--bd);">
-    <h3 style="color:var(--pd);margin-bottom:12px;">ยืนยัน/แก้ไข – ${v.name} (HN: ${v.hn})</h3>
+    <h3 style="color:var(--pd);margin-bottom:8px;">✅ ยืนยัน/แก้ไขข้อมูลกับผู้ป่วย – ${v.name} (HN: ${v.hn})</h3>
+    ${nvHigh?'<div class="al ald" style="margin-bottom:10px;"><span>🔴</span><span><b>หอบบ่อย/ER/Admit</b> — แนะนำ Consult เภสัช</span></div>':'<div class="al ali" style="margin-bottom:10px;background:#e8f5e9;border-color:#a5d6a7;"><span>🟢</span><span>อาการน้อย — ส่งคิวปกติได้</span></div>'}
+    ${assessSummaryHTML(v)}
+    <div style="margin-top:10px;margin-bottom:6px;font-weight:700;font-size:13px;color:var(--pd);">📋 ยืนยันค่ากับผู้ป่วย:</div>
     <div class="fgrid">
       <div class="fg"><label>หอบกลางวัน (ครั้ง/สัปดาห์)</label><input type="number" id="nv-day" value="${v.daytime||0}"></div>
       <div class="fg"><label>หอบกลางคืน (ครั้ง/สัปดาห์)</label><input type="number" id="nv-night" value="${v.nighttime||0}"></div>
@@ -1924,17 +2085,21 @@ function vDoctorSummary(){
     </div>
     <div style="font-weight:700;font-size:13px;color:var(--pd);margin-bottom:8px;padding-left:2px;">📅 ผู้ป่วยวันนี้ (${fmtShort(todayStr)})</div>
     <div id="dr-list">
-    ${todayVisits.length?todayVisits.map(v=>`
-      <div class="qi" onclick="openDrSummaryModal('${v.id}')">
+    ${todayVisits.length?todayVisits.map(v=>{
+      const dhigh=v.wheezeHigh||(((v.daytime||0)+(v.nighttime||0))>=2)||((v.erCount||0)>=1)||((v.admitCount||0)>=1);
+      return`<div class="qi" onclick="openDrSummaryModal('${v.id}')" style="border-left:4px solid ${dhigh?'#c62828':'#2e7d32'};">
         <div class="qih">
-          <span><strong>${v.hn}</strong> – ${v.name}</span>
+          <span><strong>${v.hn}</strong> – ${v.name}
+            ${dhigh?'<span class="pill pr" style="font-size:10px;margin-left:4px;">🔴 หอบบ่อย/ER</span>':'<span class="pill pg" style="font-size:10px;margin-left:4px;">🟢 น้อย</span>'}
+          </span>
           <div style="display:flex;gap:4px;align-items:center;">
             ${v.consultPharm?'<span class="consult-badge">CONSULT</span>':''}
             <span class="pill ${v.status==='done'?'pg':v.status==='pending_pharm'?'pb':'py'}">${v.status==='done'?'✅ เสร็จ':v.status==='pending_pharm'?'💊 รอเภสัช':'📋 กำลังดำเนินการ'}</span>
           </div>
         </div>
         <div style="font-size:12px;color:var(--tm);">${dxPill(v.dx||getPatDx(v.hn))} · ${scoreLabel(v)} · Adh: ${v.adherenceScore!=null?v.adherenceScore+'/4':'–'} · ${v.by==='nurse'?'👩‍⚕️ พยาบาล'+(v.nurseName?' ('+v.nurseName+')':''):v.by==='caregiver'?'👨‍👩‍👧 ผู้ดูแล':'👤 ผู้ป่วย'}</div>
-      </div>`).join(''):'<div style="text-align:center;padding:24px;color:var(--tm);">ไม่มีผู้ป่วยวันนี้</div>'}
+        ${assessSummaryHTML(v)}
+      </div>`;}).join(''):'<div style="text-align:center;padding:24px;color:var(--tm);">ไม่มีผู้ป่วยวันนี้</div>'}
     </div>
   </div>
   <!-- Doctor Summary Modal -->
@@ -2173,17 +2338,21 @@ function vPhQueue(){
       <button class="btn bd2 bsm" onclick="clearQueue('pharm')">🗑️ เคลียร์คิวทั้งหมด</button>
     </div>`:''}
     ${!q.length?'<div style="text-align:center;padding:30px;color:var(--tm);">✅ ไม่มีคิว</div>':
-    q.map(v=>`
-      <div class="qi" onclick="openPhDisp('${v.hn}','${v.id}')">
+    q.map(v=>{
+      const phigh=v.wheezeHigh||(((v.daytime||0)+(v.nighttime||0))>=2)||((v.erCount||0)>=1)||((v.admitCount||0)>=1);
+      return`<div class="qi" onclick="openPhDisp('${v.hn}','${v.id}')" style="border-left:4px solid ${v.consultPharm?'#e65100':phigh?'#c62828':'#2e7d32'};">
         <div class="qih">
-          <span><strong>${v.hn}</strong> – ${v.name}</span>
+          <span><strong>${v.hn}</strong> – ${v.name}
+            ${phigh?'<span class="pill pr" style="font-size:10px;margin-left:4px;">🔴 หอบบ่อย/ER</span>':'<span class="pill pg" style="font-size:10px;margin-left:4px;">🟢 น้อย</span>'}
+          </span>
           ${v.consultPharm?'<span class="consult-badge">🔔 CONSULT</span>':''}<span class="pill py">รอจ่ายยา</span>
         </div>
         <div style="font-size:12px;color:var(--tm);">📅 ${fmt(v.date)} ·
           ${v.consultPharm?`<span class="consult-badge">🔔 CONSULT</span> `:''}${v.doctorNote?`<span class="pill py" style="font-size:10px;">📝 มี Note แพทย์</span> `:''}
           ${v.type==='import'||v.type==='import_queue'?`<span class="pill pb">📋 นำเข้า</span> ${v.importDrugs?v.importDrugs.length+' รายการยา':''}`:`ACT: ${v.actScore||'–'} · Reliever: ${v.rescueLeft==='yes'?'✅':v.rescueLeft==='no'?'❌':'⚠️'}`}
         </div>
-      </div>`).join('')}
+        ${assessSummaryHTML(v)}
+      </div>`;}).join('')}
   </div>`);
 }
 
@@ -2361,8 +2530,40 @@ function openPhDisp(hn,vid){
     });
   } else {
     const lastDisp=DB.dispensing.filter(d=>d.hn===hn).sort((a,b)=>new Date(b.date)-new Date(a.date));
-    if(lastDisp.length) addPhDrugFromHistory(lastDisp[0]);
-    else addPhDrug(); // new patient → one blank row only
+    if(lastDisp.length){
+      addPhDrugFromHistory(lastDisp[0]);
+    } else {
+      // Try to auto-fill from patient reliever/controller records
+      const ptRec=DB.patients.find(x=>normHN(x.hn)===normHN(hn));
+      const visitRec=DB.visits.find(x=>x.id===(typeof phVisitId!=='undefined'?phVisitId:''));
+      const rescueLeft=visitRec?.rescueLeft||v?.rescueLeft||'unknown';
+      let filled=false;
+      if(ptRec){
+        const relNames=(ptRec.reliever||'').split(',').map(s=>s.trim()).filter(Boolean);
+        const ctrlNames=(ptRec.controller||'').split(',').map(s=>s.trim()).filter(Boolean);
+        const allDrugNames=[...relNames,...ctrlNames];
+        allDrugNames.forEach(nm=>{
+          const drug=DB.drugs.find(d=>d.name===nm||nm.includes(d.brand||'__')||d.name.toLowerCase().includes(nm.toLowerCase().split(' ')[0]));
+          if(drug){
+            const isResc=drug.cat==='rescue';
+            // If rescue drug and rescueLeft='yes' → qty=0 (still has some)
+            const qty=isResc&&(rescueLeft==='yes'||rescueLeft==='almost')?0:1;
+            addPhDrug({drugId:drug.id,mode:'new',dosePerUse:2,freqPerDay:isResc?0:2,qty:Math.max(qty,0)});
+            // Force qty input value after DOM created
+            if(qty===0){
+              setTimeout(()=>{
+                const el=document.querySelector('[id$="-qty"]');
+                // find last qty input and set to 0 if rescue
+                const allQty=document.querySelectorAll('[id$="-qty"]');
+                if(allQty.length){allQty[allQty.length-1].value=0;calcAll();}
+              },50);
+            }
+            filled=true;
+          }
+        });
+      }
+      if(!filled) addPhDrug();
+    }
   }
 }
 function getPatientDrugs(hn){
@@ -4050,8 +4251,26 @@ function vPatients(){
       <div class="fg"><label>เพศ</label><select id="pt-sex"><option>ชาย</option><option>หญิง</option></select></div>
       <div class="fg"><label>เบอร์โทร</label><input id="pt-phone"></div>
       <div class="fg"><label>การวินิจฉัย</label><select id="pt-dx"><option value="Asthma">Asthma</option><option value="COPD">COPD</option><option value="Asthma+COPD">ACO</option></select></div>
-      <div class="fg" style="grid-column:1/-1"><label>💨 Reliever ที่ใช้</label><input id="pt-reliever" placeholder="เช่น Salbutamol MDI, Ipratropium"></div>
-      <div class="fg" style="grid-column:1/-1"><label>🔵 Controller ที่ใช้</label><input id="pt-controller" placeholder="เช่น ICS/LABA, Tiotropium"></div>
+      <div class="fg" style="grid-column:1/-1">
+        <label>💨 Reliever (ยาฉุกเฉิน)</label>
+        <div class="drug-ms-wrap" id="pt-reliever-wrap">
+          <div class="drug-ms-box" id="pt-reliever-box" onclick="toggleDrugMenu('pt-reliever')">
+            <span class="drug-ms-ph" id="pt-reliever-ph">— เลือกยา Reliever —</span>
+            <span style="color:#aaa;font-size:11px;margin-left:auto;">▼</span>
+          </div>
+          <div class="drug-ms-menu" id="pt-reliever-menu" style="display:none;"></div>
+        </div>
+      </div>
+      <div class="fg" style="grid-column:1/-1">
+        <label>🔵 Controller (ยาคุมอาการ)</label>
+        <div class="drug-ms-wrap" id="pt-controller-wrap">
+          <div class="drug-ms-box" id="pt-controller-box" onclick="toggleDrugMenu('pt-controller')">
+            <span class="drug-ms-ph" id="pt-controller-ph">— เลือกยา Controller —</span>
+            <span style="color:#aaa;font-size:11px;margin-left:auto;">▼</span>
+          </div>
+          <div class="drug-ms-menu" id="pt-controller-menu" style="display:none;"></div>
+        </div>
+      </div>
     </div></div>
     <div class="mf"><button class="btn bgray" onclick="document.getElementById('pt-modal').classList.remove('on')">ยกเลิก</button><button class="btn bs" onclick="addPt()">✅ บันทึก</button></div>
     </div>
@@ -4124,12 +4343,115 @@ function filterPt(q){
     b.innerHTML=renderPtTable(res);
   }
 }
-function openAddPt(){document.getElementById('pt-modal').classList.add('on');}
+// ── Drug multi-select helpers ──────────────────────────────────────────────
+const _drugSel = {reliever:[], controller:[]};
+
+function buildDrugMenu(cat, prefix){
+  const menu = document.getElementById(prefix+'-menu');
+  if(!menu) return;
+  const drugs = DB.drugs.filter(d=>d.cat===cat);
+  if(!drugs.length){
+    menu.innerHTML='<div style="padding:10px 14px;color:var(--tm);font-size:12px;">ยังไม่มียาในระบบ — เพิ่มยาใน ฐานข้อมูลยา ก่อน</div>';
+    return;
+  }
+  const key = prefix.includes('reliever')?'reliever':'controller';
+  menu.innerHTML = drugs.map(d=>{
+    const sel = _drugSel[key].includes(d.id);
+    return '<div class="dmi'+(sel?' sel':'')+'" data-prefix="'+prefix+'" data-id="'+d.id+'" onclick="dmiClick(this)">'
+      +'<input type="checkbox"'+(sel?' checked':'')+' onclick="event.stopPropagation();dmiClick(this.parentElement)">'
+      +'<span class="dn">'+d.name+'</span>'
+      +'<span class="dt">'+(d.type||'')+'</span>'
+      +'</div>';
+  }).join('');
+}
+
+function dmiClick(el){
+  const prefix = el.dataset.prefix;
+  const drugId = el.dataset.id;
+  const key = prefix.includes('reliever')?'reliever':'controller';
+  const arr = _drugSel[key];
+  const idx = arr.indexOf(drugId);
+  if(idx>=0) arr.splice(idx,1); else arr.push(drugId);
+  el.classList.toggle('sel', arr.includes(drugId));
+  const cb = el.querySelector('input[type=checkbox]');
+  if(cb) cb.checked = arr.includes(drugId);
+  updateDrugTags(prefix, key);
+}
+
+function toggleDrugMenu(prefix){
+  const cat = prefix.includes('reliever')?'rescue':'controller';
+  buildDrugMenu(cat, prefix);
+  const menu = document.getElementById(prefix+'-menu');
+  if(!menu) return;
+  const isOpen = menu.style.display!=='none';
+  document.querySelectorAll('.drug-ms-menu').forEach(m=>m.style.display='none');
+  if(!isOpen) menu.style.display='block';
+}
+
+function updateDrugTags(prefix, key){
+  const box = document.getElementById(prefix+'-box');
+  const ph  = document.getElementById(prefix+'-ph');
+  if(!box||!ph) return;
+  const arr = _drugSel[key];
+  box.querySelectorAll('.drug-tag').forEach(t=>t.remove());
+  if(!arr.length){ ph.style.display=''; return; }
+  ph.style.display='none';
+  arr.forEach(id=>{
+    const drug = DB.drugs.find(d=>d.id===id);
+    if(!drug) return;
+    const tag = document.createElement('span');
+    tag.className = 'drug-tag';
+    const nm = document.createTextNode(drug.name);
+    tag.appendChild(nm);
+    const xBtn = document.createElement('span');
+    xBtn.className='dx'; xBtn.textContent='×';
+    xBtn.dataset.prefix=prefix; xBtn.dataset.id=id;
+    xBtn.onclick = function(e){
+      e.stopPropagation();
+      const k=this.dataset.prefix.includes('reliever')?'reliever':'controller';
+      const a=_drugSel[k];
+      const i=a.indexOf(this.dataset.id);
+      if(i>=0) a.splice(i,1);
+      const menuEl=document.getElementById(this.dataset.prefix+'-menu');
+      if(menuEl&&menuEl.style.display!=='none') buildDrugMenu(k==='reliever'?'rescue':'controller',this.dataset.prefix);
+      updateDrugTags(this.dataset.prefix,k);
+    };
+    tag.appendChild(xBtn);
+    box.insertBefore(tag, box.lastElementChild);
+  });
+}
+
+function getDrugNames(key){
+  return _drugSel[key].map(id=>{const d=DB.drugs.find(x=>x.id===id);return d?d.name:'';}).filter(Boolean).join(', ');
+}
+
+document.addEventListener('click', e=>{
+  if(!e.target.closest('.drug-ms-wrap')) document.querySelectorAll('.drug-ms-menu').forEach(m=>m.style.display='none');
+});
+function openAddPt(){
+  // Reset selections
+  _drugSel.reliever=[];
+  _drugSel.controller=[];
+  // Reset UI
+  ['pt-reliever','pt-controller'].forEach(p=>{
+    const box=document.getElementById(p+'-box');
+    const ph=document.getElementById(p+'-ph');
+    if(box) box.querySelectorAll('.drug-tag').forEach(t=>t.remove());
+    if(ph) ph.style.display='';
+    const menu=document.getElementById(p+'-menu');
+    if(menu) menu.style.display='none';
+  });
+  // Clear other fields
+  ['pt-hn','pt-name','pt-phone'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  const dob=document.getElementById('pt-dob');if(dob)dob.value='';
+  document.getElementById('pt-modal').classList.add('on');
+  setTimeout(()=>document.getElementById('pt-hn')?.focus(),80);
+}
 function addPt(){
   const hn=document.getElementById('pt-hn').value.trim();const name=document.getElementById('pt-name').value.trim();
   if(!hn||!name){toast('กรุณากรอก HN และชื่อ','e');return;}
   if(DB.patients.find(p=>p.hn===hn)){toast('HN นี้มีอยู่แล้ว','e');return;}
-  DB.patients.push({id:uid(),hn,name,dob:document.getElementById('pt-dob').value,gender:document.getElementById('pt-sex').value,phone:document.getElementById('pt-phone').value,dx:document.getElementById('pt-dx').value,reliever:document.getElementById('pt-reliever').value.trim(),controller:document.getElementById('pt-controller').value.trim(),createdAt:new Date().toISOString()});
+  DB.patients.push({id:uid(),hn,name,dob:document.getElementById('pt-dob').value,gender:document.getElementById('pt-sex').value,phone:document.getElementById('pt-phone').value,dx:document.getElementById('pt-dx').value,reliever:getDrugNames('reliever'),controller:getDrugNames('controller'),createdAt:new Date().toISOString()});
   saveDB();document.getElementById('pt-modal').classList.remove('on');
   document.getElementById('pt-body').innerHTML=renderPtTable(DB.patients);toast('เพิ่มผู้ป่วยแล้ว ✅');
 }
@@ -4148,12 +4470,72 @@ function vSettings(){
     </div>
     <button class="btn bs" onclick="saveSettings()">💾 บันทึกรหัสผ่าน</button>
     <hr style="margin:20px 0;">
+    <h3 style="margin-bottom:12px;color:var(--pd);">☁️ Cloud Sync — ใช้ร่วมกันหลายเครื่อง</h3>
+    <div class="al ali" style="margin-bottom:12px;"><span>ℹ️</span><span>ใช้ <b>Firebase Realtime Database</b> (ฟรี) เพื่อซิงค์ข้อมูลระหว่างเครื่อง <a href="https://console.firebase.google.com" target="_blank" style="color:var(--p);">สร้าง project ที่นี่</a></span></div>
+    <div class="fgrid">
+      <div class="fg" style="grid-column:1/-1">
+        <label>Firebase Database URL</label>
+        <input id="set-sync-url" placeholder="https://your-project-default-rtdb.firebaseio.com" value="${SYNC.url}" style="font-family:monospace;font-size:12px;">
+        <div style="font-size:11px;color:var(--tm);margin-top:3px;">วิธีได้ URL: Firebase Console → Realtime Database → Copy URL (ไม่ต้องใส่ path)</div>
+      </div>
+      <div class="fg">
+        <label>Database Secret (ถ้ากำหนด Rules ไว้)</label>
+        <input id="set-sync-secret" type="password" placeholder="ไม่บังคับ — ใส่ถ้า Rules ไม่ใช่ public" value="${SYNC.secret}">
+        <div style="font-size:11px;color:var(--tm);margin-top:3px;">Firebase Console → Project Settings → Service Accounts → Database Secrets</div>
+      </div>
+      <div class="fg" style="display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="set-sync-auto" ${SYNC.autoSync?'checked':''} style="width:16px;height:16px;accent-color:var(--p);">
+        <label style="cursor:pointer;" onclick="document.getElementById('set-sync-auto').click()">Auto-sync ทุก 30 วินาที (เหมาะกับหลายคนใช้พร้อมกัน)</label>
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+      <button class="btn bs" onclick="saveSyncSettings()">💾 บันทึก Cloud Sync</button>
+      <button class="btn bp" onclick="testPull()">⬇️ ดึงข้อมูลจาก Cloud ตอนนี้</button>
+      <button class="btn bo" onclick="pushToCloud().then(()=>toast('อัปโหลดแล้ว ✅'))">⬆️ อัปโหลดสู่ Cloud ตอนนี้</button>
+      <button class="btn bgray" onclick="clearSyncSettings()">🗑️ ยกเลิก Cloud Sync</button>
+    </div>
+    <div id="sync-test-result" style="margin-top:8px;font-size:12px;"></div>
+    <div style="margin-top:10px;background:#f8fbff;border-radius:8px;padding:12px;font-size:12px;">
+      <b>📋 วิธีตั้งค่า Firebase (ครั้งแรก):</b><br>
+      1. ไปที่ <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a> → Create project (ฟรี)<br>
+      2. เลือก Build → Realtime Database → Create Database<br>
+      3. เลือก Rules → แก้เป็น <code>{"rules":{".read":true,".write":true}}</code> (สำหรับ LAN ที่ปลอดภัย) หรือใช้ Secret Key<br>
+      4. Copy Database URL (รูปแบบ <code>https://xxx.firebaseio.com</code>) มาใส่ด้านบน<br>
+      5. กด "ดึงข้อมูลจาก Cloud" เพื่อทดสอบ
+    </div>
+    <hr style="margin:20px 0;">
     <h3 style="margin-bottom:12px;color:var(--pd);">🔄 รีเซ็ตข้อมูล</h3>
     <div class="al ald"><span>⚠️</span><span>การรีเซ็ตจะลบข้อมูลทั้งหมดออกจาก browser นี้</span></div>
     <button class="btn bd2" onclick="if(confirm('ยืนยันลบข้อมูลทั้งหมด?')){localStorage.removeItem('${SK}');location.reload();}">🗑️ รีเซ็ตข้อมูลทั้งหมด</button>
     <hr style="margin:20px 0;">
     <p style="color:var(--tm);font-size:12px;">รหัสผ่านเริ่มต้น: nurse=<code>N1234</code> | pharm=<code>P1234</code> | doctor=<code>D1234</code> | admin=<code>admin11091</code></p>
   </div>`);
+}
+async function saveSyncSettings(){
+  SYNC.url=(document.getElementById('set-sync-url')?.value||'').trim();
+  SYNC.secret=(document.getElementById('set-sync-secret')?.value||'').trim();
+  SYNC.autoSync=document.getElementById('set-sync-auto')?.checked||false;
+  saveSyncCfg();
+  startAutoSync();
+  toast('บันทึก Cloud Sync แล้ว ✅');
+  // Push current data to cloud immediately
+  if(SYNC.url) pushToCloud();
+}
+async function testPull(){
+  const res=document.getElementById('sync-test-result');
+  if(res) res.innerHTML='<span style="color:#1565c0;">⬇️ กำลังดึงข้อมูล...</span>';
+  const ok=await pullFromCloud(false);
+  if(res) res.innerHTML=ok?'<span style="color:#2e7d32;">✅ ซิงค์สำเร็จ! ข้อมูลอัปเดตแล้ว — รีเฟรชหน้าจะเห็นข้อมูลใหม่</span>':'<span style="color:#e65100;">⚠️ เชื่อมต่อได้แต่ยังไม่มีข้อมูลบน cloud</span>';
+  if(ok) setTimeout(()=>location.reload(),1500);
+}
+function clearSyncSettings(){
+  if(!confirm('ยืนยันยกเลิก Cloud Sync? ข้อมูลใน Local จะยังอยู่')) return;
+  SYNC={url:'',secret:'',autoSync:false,lastSync:null,status:'idle'};
+  saveSyncCfg();
+  if(_autoSyncTimer){clearInterval(_autoSyncTimer);_autoSyncTimer=null;}
+  setSyncStatus('idle');
+  toast('ยกเลิก Cloud Sync แล้ว');
+  vSettings();
 }
 function saveSettings(){
   const n=document.getElementById('set-nurse').value;const p=document.getElementById('set-pharm').value;
@@ -4189,3 +4571,4 @@ function loadDemoData(){
 </script>
 </body>
 </html>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
