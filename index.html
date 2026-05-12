@@ -2,7 +2,10 @@
 <html lang="th">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0f4d8a">
 <title>Asthma/COPD Clinic</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -150,8 +153,83 @@ tr:hover td{background:#f8fbff;}
 .login-box p{text-align:center;color:var(--tm);font-size:13px;margin-bottom:20px;}
 /* ---- TOAST ---- */
 #toast{position:fixed;bottom:20px;right:20px;padding:11px 18px;border-radius:8px;font-size:13px;z-index:500;display:none;box-shadow:0 4px 16px rgba(0,0,0,.25);color:#fff;max-width:280px;}
-/* ---- RESPONSIVE ---- */
+/* ---- RESPONSIVE / iPhone ---- */
 @media(max-width:600px){.fgrid{grid-template-columns:1fr;}.sgrid{grid-template-columns:1fr 1fr;}}
+
+@media(max-width:768px){
+  /* Landing */
+  #pg-land{padding:env(safe-area-inset-top,24px) 16px env(safe-area-inset-bottom,24px);}
+  #pg-land h1{font-size:22px;}
+  .land-cards{gap:10px;max-width:100%;}
+  .land-card{width:calc(50% - 6px);padding:18px 10px;}
+  .land-card .lc-icon{font-size:30px;margin-bottom:8px;}
+  .land-card .lc-title{font-size:12px;}
+  .land-card .lc-sub{font-size:10px;}
+  /* Topbar */
+  #topbar{height:auto;min-height:52px;padding:env(safe-area-inset-top,0) 12px 0;flex-wrap:wrap;}
+  #topbar h1{font-size:13px;}
+  #topbar .tb-right{gap:5px;}
+  .role-badge{font-size:10px;padding:2px 7px;}
+  /* Tab nav */
+  #tabnav{padding:0 6px;-webkit-overflow-scrolling:touch;}
+  .tnav{padding:10px 11px;font-size:12px;}
+  /* Content */
+  #content{padding:10px 10px env(safe-area-inset-bottom,10px);}
+  /* Cards */
+  .card{padding:13px;margin-bottom:10px;border-radius:8px;}
+  .ch{margin-bottom:10px;padding-bottom:8px;}
+  .ct{font-size:14px;}
+  /* Stats */
+  .sgrid{grid-template-columns:1fr 1fr;gap:9px;}
+  .sc{padding:12px;}
+  .sv{font-size:24px;}
+  /* Form */
+  .fgrid{grid-template-columns:1fr;}
+  .fg input,.fg select,.fg textarea{font-size:16px!important;padding:10px 12px;}/* ป้องกัน iOS zoom */
+  /* Buttons */
+  .btn{min-height:42px;font-size:13px;}
+  .bsm{min-height:34px;padding:5px 10px;}
+  /* Modal */
+  .mb{width:98%;max-width:100%;max-height:94vh;border-radius:12px;}
+  .mc{padding:14px;}
+  .mh{padding:13px 16px;}
+  /* Toast */
+  #toast{bottom:calc(env(safe-area-inset-bottom,0px) + 14px);left:50%;transform:translateX(-50%);right:auto;width:88%;text-align:center;font-size:13px;}
+  /* Login */
+  .login-box{padding:22px 18px;width:92%;border-radius:14px;}
+  .login-box h2{font-size:17px;}
+  /* Table: horizontal scroll */
+  .tw{overflow-x:auto;-webkit-overflow-scrolling:touch;}
+  table{min-width:520px;}
+  th,td{padding:8px 9px;font-size:12px;}
+  /* Queue items */
+  .qi{padding:11px;}
+  /* ACT options wrap */
+  .aopts{gap:5px;}
+  .ar+label{padding:5px 9px;font-size:11px;}
+  /* Adherence */
+  .adhq{flex-direction:column;align-items:flex-start;gap:7px;}
+  .adhr label{padding:6px 14px;}
+  /* Drug menu */
+  .drug-ms-menu{max-height:180px;}
+  /* HN suggest */
+  .hn-suggest{max-height:190px;}
+  /* Sync status */
+  #sync-status{font-size:10px;}
+  /* Nav right items */
+  .tnav-r{font-size:11px;padding:10px 9px;}
+}
+
+@media(max-width:390px){
+  /* iPhone 16 / 15 / 14 Pro (393px) */
+  .land-card{padding:14px 8px;}
+  .land-card .lc-icon{font-size:26px;}
+  #topbar h1{font-size:12px;}
+  .tnav{padding:9px 8px;font-size:11px;}
+  #content{padding:8px 8px env(safe-area-inset-bottom,8px);}
+  .sgrid{grid-template-columns:1fr 1fr;gap:7px;}
+  .sv{font-size:22px;}
+}
 
 /* ── Drug multi-select dropdown ── */
 .drug-ms-wrap{position:relative;}
@@ -228,6 +306,10 @@ tr:hover td{background:#f8fbff;}
       <input type="password" id="login-pw" placeholder="รหัสผ่าน" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
     </div>
     <div id="login-err" class="al ald" style="display:none"><span>❌</span><span>รหัสผ่านไม่ถูกต้อง</span></div>
+    <div style="display:flex;align-items:center;gap:8px;margin:8px 0 4px;">
+      <input type="checkbox" id="login-remember" style="width:18px;height:18px;cursor:pointer;" checked>
+      <label for="login-remember" style="cursor:pointer;font-size:14px;color:#555;">จำการเข้าสู่ระบบไว้ 30 วัน</label>
+    </div>
     <div style="display:flex;gap:8px;margin-top:4px;">
       <button class="btn bp" style="flex:1" onclick="doLogin()">เข้าสู่ระบบ</button>
       <button class="btn bgray" onclick="closeLogin()">ยกเลิก</button>
@@ -391,7 +473,7 @@ const SESS_DAYS=30;
 const SYNC_CFG_KEY='asthma_v2_sync';
 let SYNC={url:'',secret:'',autoSync:false,lastSync:null,status:'idle'};
 let DB = {patients:[],visits:[],dispensing:[],drugs:[],
-  users:{nurse:'N1234',pharmacist:'P1234',admin:'admin11091'},
+  users:{nurse:'N1234',pharmacist:'P1234',admin:'admin11091',doctor:'D1234'},
   userAccounts:[],auditLog:[],pwVersion:0};
 let SESSION = {role:null, userId:null, userName:null, userDisplayName:null};
 let loginTarget = '';
@@ -713,23 +795,40 @@ function vUserAccounts(){
         </div>
       </div>
     </div>
+  </div>
+  <!-- Reset Password Modal -->
+  <div id="resetpw-modal" class="mo" style="display:none;">
+    <div class="mb" style="max-width:380px;width:100%;">
+      <div class="mh"><h3>🔑 รีเซ็ตรหัสผ่าน</h3><button class="mx" onclick="closeModal('resetpw-modal')">×</button></div>
+      <div class="mc">
+        <div class="al ali" style="margin-bottom:14px;"><span>👤</span><span>ผู้ใช้: <strong id="rpw-username"></strong></span></div>
+        <div class="fg"><label>รหัสผ่านใหม่ *</label><input type="password" id="rpw-new" placeholder="อย่างน้อย 4 ตัวอักษร" onkeydown="if(event.key==='Enter')document.getElementById('rpw-confirm').focus()"></div>
+        <div class="fg"><label>ยืนยันรหัสผ่าน *</label><input type="password" id="rpw-confirm" placeholder="กรอกซ้ำอีกครั้ง" onkeydown="if(event.key==='Enter')saveResetPw()"></div>
+        <div id="rpw-err" style="color:#e53935;font-size:12px;margin-bottom:8px;display:none;"></div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn bp" style="flex:1" onclick="saveResetPw()">💾 บันทึก</button>
+          <button class="btn bgray" onclick="closeModal('resetpw-modal')">ยกเลิก</button>
+        </div>
+      </div>
+    </div>
   </div>`);
 }
 function renderUserTable(){
   const accts=DB.userAccounts||[];
   if(!accts.length)return'<div style="text-align:center;padding:24px;color:var(--tm);">ยังไม่มีบัญชีผู้ใช้<br><small>รหัสผ่าน role หลัก (nurse/pharmacist/doctor/admin) ยังใช้งานได้ตามปกติ</small></div>';
   const rLabel={nurse:'👩‍⚕️ พยาบาล',pharmacist:'💊 เภสัชกร',doctor:'🩺 แพทย์',admin:'⚙️ Admin'};
-  return`<table><thead><tr><th>Username</th><th>ชื่อ</th><th>Role</th><th>สถานะ</th><th>สร้างเมื่อ</th><th>Action</th></tr></thead><tbody>
+  return`<table><thead><tr><th>Username</th><th>ชื่อ</th><th>Role</th><th>สถานะ</th><th>Login ล่าสุด</th><th>Action</th></tr></thead><tbody>
   ${accts.map(u=>`<tr>
     <td><strong>${u.username}</strong></td>
     <td>${u.name||'–'}</td>
     <td><span class="pill ${u.role==='admin'?'pr':u.role==='doctor'?'pb':u.role==='pharmacist'?'py':'pg'}">${rLabel[u.role]||u.role}</span></td>
     <td>${u.active?'<span class="pill pg">✅ ใช้งาน</span>':'<span class="pill pr">🚫 ระงับ</span>'}</td>
-    <td style="font-size:12px;">${u.createdAt?fmtShort(u.createdAt):'–'}</td>
+    <td style="font-size:12px;">${u.lastLogin?fmtShort(u.lastLogin):'ยังไม่เคย'}</td>
     <td style="display:flex;gap:4px;flex-wrap:wrap;">
       <button class="btn bsm bo" onclick="editUserModal('${u.id}')">✏️</button>
-      <button class="btn bsm ${u.active?'bw':'bg'}" onclick="toggleUserActive('${u.id}')">${u.active?'🚫 ระงับ':'✅ เปิด'}</button>
-      <button class="btn bsm bp" onclick="resetUserPw('${u.id}')">🔑 รีเซ็ต</button>
+      <button class="btn bsm ${u.active?'bw':'bs'}" onclick="toggleUserActive('${u.id}')">${u.active?'🚫':'✅'}</button>
+      <button class="btn bsm bp" onclick="openResetPwModal('${u.id}')">🔑</button>
+      <button class="btn bsm bd2" onclick="deleteUserAccount('${u.id}')">🗑️</button>
     </td>
   </tr>`).join('')}</tbody></table>`;
 }
@@ -786,13 +885,34 @@ function toggleUserActive(id){
   alog(u.active?'USER_ENABLE':'USER_DISABLE','user: '+u.username);
   vUserAccounts();toast(u.active?'เปิดใช้งานแล้ว':'ระงับบัญชีแล้ว');
 }
-async function resetUserPw(id){
+let _resetPwUserId=null;
+function openResetPwModal(id){
   const u=(DB.userAccounts||[]).find(x=>x.id===id);if(!u)return;
-  const newPw=prompt('รหัสผ่านใหม่สำหรับ '+u.username+':');
-  if(!newPw||newPw.length<4){toast('รหัสผ่านสั้นเกินไป','e');return;}
-  u.pwHash=await sha256hex(newPw);saveDB();
+  _resetPwUserId=id;
+  document.getElementById('rpw-username').textContent=u.username;
+  document.getElementById('rpw-new').value='';
+  document.getElementById('rpw-confirm').value='';
+  document.getElementById('rpw-err').style.display='none';
+  document.getElementById('resetpw-modal').style.display='flex';
+  setTimeout(()=>document.getElementById('rpw-new').focus(),100);
+}
+async function saveResetPw(){
+  const u=(DB.userAccounts||[]).find(x=>x.id===_resetPwUserId);if(!u)return;
+  const pw=document.getElementById('rpw-new').value;
+  const pw2=document.getElementById('rpw-confirm').value;
+  const err=document.getElementById('rpw-err');
+  if(!pw||pw.length<4){err.textContent='รหัสผ่านต้องมีอย่างน้อย 4 ตัวอักษร';err.style.display='block';return;}
+  if(pw!==pw2){err.textContent='รหัสผ่านไม่ตรงกัน';err.style.display='block';return;}
+  u.pwHash=await sha256hex(pw);saveDB();
   alog('USER_RESET_PW','reset pw: '+u.username);
-  toast('รีเซ็ตรหัสผ่านเรียบร้อย');
+  closeModal('resetpw-modal');toast('รีเซ็ตรหัสผ่านเรียบร้อย');
+}
+function deleteUserAccount(id){
+  const u=(DB.userAccounts||[]).find(x=>x.id===id);if(!u)return;
+  if(!confirm('ลบบัญชี "'+u.username+'" ออกจากระบบ?\nไม่สามารถกู้คืนได้'))return;
+  DB.userAccounts=DB.userAccounts.filter(x=>x.id!==id);
+  alog('USER_DELETE','ลบ: '+u.username);
+  saveDB();vUserAccounts();toast('ลบบัญชีเรียบร้อย');
 }
 
 // ==================== AUDIT LOG (Admin) ====================
@@ -1148,9 +1268,9 @@ window.addEventListener('load',()=>{if(location.hash.startsWith('#rescue-'))hand
 // ==================== AUTH ====================
 function showLogin(role){
   loginTarget=role;
-  const titles={nurse:'พยาบาล',pharmacist:'เภสัชกร',admin:'Admin'};
-  document.getElementById('login-title').textContent='เข้าสู่ระบบ – '+titles[role];
-  document.getElementById('login-sub').textContent='กรอกรหัสผ่านสำหรับ'+titles[role];
+  const titles={nurse:'พยาบาล',pharmacist:'เภสัชกร',admin:'Admin',doctor:'แพทย์'};
+  document.getElementById('login-title').textContent='เข้าสู่ระบบ – '+(titles[role]||role);
+  document.getElementById('login-sub').textContent='กรอกชื่อผู้ใช้และรหัสผ่าน';
   document.getElementById('login-user').value='';
   document.getElementById('login-pw').value='';
   document.getElementById('login-err').style.display='none';
@@ -1191,10 +1311,14 @@ async function doLogin(){
   if(matchRole){
     resetAttempts(lockKey);closeLogin();
     auditLog('LOGIN',matchUserId,matchUserName,'เข้าสู่ระบบ role:'+matchRole);
-    const remChk=document.getElementById('login-remember');
-    if(remChk&&remChk.checked){
-      try{localStorage.setItem(SESS_KEY,JSON.stringify({role:matchRole,userId:matchUserId,userName:matchUserName,displayName:matchDisplayName,exp:Date.now()+SESS_DAYS*86400000}));}catch(e){}
+    // บันทึก lastLogin ใน userAccount
+    if(matchUserId&&!matchUserId.startsWith('role_')){
+      const accRec=(DB.userAccounts||[]).find(u=>u.id===matchUserId);
+      if(accRec){accRec.lastLogin=new Date().toISOString();saveDB();}
     }
+    const remChk=document.getElementById('login-remember');
+    const sessDur=(remChk&&remChk.checked)?SESS_DAYS*86400000:8*3600000;
+    try{localStorage.setItem(SESS_KEY,JSON.stringify({role:matchRole,userId:matchUserId,userName:matchUserName,displayName:matchDisplayName,exp:Date.now()+sessDur}));}catch(e){}
     if(SYNC.url){
       pullFromCloud(true).then(()=>{startApp(matchRole,matchUserId,matchDisplayName,matchUserName);startAutoSync();});
     } else {
@@ -4571,4 +4695,3 @@ function loadDemoData(){
 </script>
 </body>
 </html>
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   
