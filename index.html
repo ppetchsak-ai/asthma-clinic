@@ -301,6 +301,7 @@ tr:hover td{background:#f8fbff;}
     <p id="login-sub">กรอกชื่อผู้ใช้และรหัสผ่าน</p>
     <div class="fg"><label>ชื่อผู้ใช้ (Username)</label>
       <input type="text" id="login-user" placeholder="ชื่อผู้ใช้" autocomplete="username" onkeydown="if(event.key==='Enter')document.getElementById('login-pw').focus()">
+      <span id="login-user-hint" style="font-size:11px;color:#888;margin-top:2px;">💡 บัญชีส่วนตัว: พิมพ์ username ที่ตั้งไว้แทน</span>
     </div>
     <div class="fg"><label>รหัสผ่าน</label>
       <input type="password" id="login-pw" placeholder="รหัสผ่าน" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
@@ -332,6 +333,7 @@ tr:hover td{background:#f8fbff;}
     </div>
   </div>
   <div id="tabnav"></div>
+  <div id="idle-warn" onclick="resetActivity()" style="display:none;background:#e65100;color:#fff;text-align:center;padding:8px 16px;font-size:13px;cursor:pointer;position:sticky;top:52px;z-index:99;"></div>
   <div id="content"></div>
 </div>
 
@@ -480,6 +482,7 @@ let loginTarget = '';
 
 function loadDB(){try{const d=localStorage.getItem(SK);if(d)DB=JSON.parse(d);}catch(e){}}
 function saveDB(){
+  DB.updatedAt=Date.now();
   try{localStorage.setItem(SK,JSON.stringify(DB));}catch(e){}
   if(SYNC.url) pushToCloud();
 }
@@ -517,6 +520,13 @@ async function pullFromCloud(silent){
     if(!r.ok) throw new Error('HTTP '+r.status);
     const remote=await r.json();
     if(remote&&remote.patients){
+      const localUpdAt=DB.updatedAt||0;
+      const remoteUpdAt=remote.updatedAt||0;
+      if(!silent&&DB.patients.length>0&&localUpdAt>remoteUpdAt&&remoteUpdAt>0){
+        if(!confirm('⚠️ ข้อมูลในเครื่องนี้ใหม่กว่า Cloud\nดึงข้อมูลจาก Cloud ทับข้อมูลในเครื่องหรือไม่?\n(กด Cancel เพื่ออัปโหลดเครื่องนี้ขึ้น Cloud แทน)')){
+          pushToCloud(); return false;
+        }
+      }
       DB=remote;
       localStorage.setItem(SK,JSON.stringify(DB));
       SYNC.lastSync=new Date().toISOString();
@@ -1269,13 +1279,19 @@ window.addEventListener('load',()=>{if(location.hash.startsWith('#rescue-'))hand
 function showLogin(role){
   loginTarget=role;
   const titles={nurse:'พยาบาล',pharmacist:'เภสัชกร',admin:'Admin',doctor:'แพทย์'};
-  document.getElementById('login-title').textContent='เข้าสู่ระบบ – '+(titles[role]||role);
+  const roleLabel=titles[role]||role;
+  document.getElementById('login-title').textContent='เข้าสู่ระบบ – '+roleLabel;
   document.getElementById('login-sub').textContent='กรอกชื่อผู้ใช้และรหัสผ่าน';
-  document.getElementById('login-user').value='';
+  // pre-fill ด้วย role name (สำหรับรหัสผ่านกลุ่ม) ผู้ใช้ที่มีบัญชีส่วนตัวให้แก้ไขเอง
+  document.getElementById('login-user').value=role;
   document.getElementById('login-pw').value='';
   document.getElementById('login-err').style.display='none';
+  // แสดง/ซ่อน hint ตามจำนวนบัญชีส่วนตัวใน role นี้
+  const namedCount=(DB.userAccounts||[]).filter(u=>u.active&&u.role===role).length;
+  const hint=document.getElementById('login-user-hint');
+  if(hint)hint.style.display=namedCount>0?'block':'none';
   document.getElementById('pg-login').classList.add('on');
-  setTimeout(()=>document.getElementById('login-user').focus(),100);
+  setTimeout(()=>document.getElementById('login-pw').focus(),100);
 }
 function closeLogin(){document.getElementById('pg-login').classList.remove('on');}
 async function doLogin(){
@@ -1347,10 +1363,25 @@ function openLoginFor(role){
 function goPublic(){startApp('public','public','ผู้ป่วย/อสม.','public');}
 function doLogout(){
   SESSION.role=null;
+  _lastActivity=Date.now();
   try{localStorage.removeItem(SESS_KEY);}catch(e){}
   document.getElementById('app').style.display='none';
   document.getElementById('pg-land').style.display='flex';
+  const w=document.getElementById('idle-warn');if(w)w.style.display='none';
 }
+
+// ---- SESSION TIMEOUT (30 min inactivity) ----
+const IDLE_MS=30*60*1000; const IDLE_WARN_MS=25*60*1000;
+let _lastActivity=Date.now();
+function resetActivity(){_lastActivity=Date.now();const w=document.getElementById('idle-warn');if(w)w.style.display='none';}
+function checkIdle(){
+  if(!SESSION.role) return;
+  const idle=Date.now()-_lastActivity;
+  if(idle>=IDLE_MS){doLogout();setTimeout(()=>toast('🔒 หมดเวลา — ออกจากระบบอัตโนมัติ','e'),100);}
+  else if(idle>=IDLE_WARN_MS){const w=document.getElementById('idle-warn');if(w){const rem=Math.ceil((IDLE_MS-idle)/60000);w.textContent='⏰ จะออกจากระบบใน '+rem+' นาที เนื่องจากไม่มีการใช้งาน — แตะที่นี่เพื่อต่อเวลา';w.style.display='block';}}
+}
+['click','keypress','touchstart','mousemove'].forEach(ev=>document.addEventListener(ev,resetActivity,{passive:true}));
+setInterval(checkIdle,60000);
 function startApp(role,userId,displayName,userName){
   SESSION.role=role;
   SESSION.userId=userId||('role_'+role);
@@ -1391,6 +1422,7 @@ const NAVS = {
     {id:'phqueue',label:'📥 คิวจ่ายยา',fn:'vPhQueue'},
     {id:'phdisp',label:'💊 จ่ายยา/คำนวณ',fn:'vPhDisp'},
     {id:'phhistory',label:'📋 ประวัติการจ่าย',fn:'vPhHistory'},
+    {id:'appointments',label:'📅 นัดหมาย',fn:'vAppointments'},
     {id:'rescue',label:'💨 Reliever',fn:'vRescueHistory'},
     {id:'import',label:'📂 นำเข้า Excel',fn:'vImport'},
     {id:'pthistory',label:'📂 ประวัติ',fn:'vPatientHistory'},
@@ -1406,12 +1438,14 @@ const NAVS = {
     {id:'phqueue',label:'💊 คิวเภสัช',fn:'vPhQueue'},
     {id:'phdisp',label:'💉 จ่ายยา',fn:'vPhDisp'},
     {id:'phhistory',label:'📦 ประวัติจ่าย',fn:'vPhHistory'},
+    {id:'appointments',label:'📅 นัดหมาย',fn:'vAppointments'},
     {id:'drsummary',label:'🩺 ใบสรุปแพทย์',fn:'vDoctorSummary'},
     {id:'drugdb',label:'🧪 ฐานข้อมูลยา',fn:'vDrugDB'},
     {id:'rescue',label:'💨 Reliever',fn:'vRescueHistory'},
     {id:'import',label:'📂 นำเข้า Excel',fn:'vImport'},
     {id:'pthistory',label:'📂 ประวัติ',fn:'vPatientHistory'},
     {id:'guide',label:'📖 คู่มือ',fn:'vGuide'},
+    {id:'trash',label:'🗑️ ถังขยะ',fn:'vTrash',right:true},
     {id:'useraccts',label:'👤 ผู้ใช้',fn:'vUserAccounts',right:true},
     {id:'settings',label:'⚙️ ตั้งค่า',fn:'vSettings',right:true},
   ]
@@ -2024,9 +2058,13 @@ function vNurseQueue(){
   function hasSelfAssess(hn){
     return DB.visits.some(v=>v.hn===hn&&v.by==='patient'&&(v.actScore||v.daytime!=null));
   }
+  const lowMed=pending.filter(v=>v.rescueLeft==='no'||v.rescueLeft==='almost');
+  const overdueAppt=pending.filter(v=>{const a=getLastAppt(v.hn);return a&&daysUntil(a)<0;});
   setContent(`
   <div class="card">
     ${getRescueAlertBanner()}
+    ${lowMed.length?`<div class="al alw" style="margin-bottom:8px;"><span>💨</span><span><b>${lowMed.length} คน</b> ยาพ่นฉุกเฉินเหลือน้อยหรือหมด</span></div>`:''}
+    ${overdueAppt.length?`<div class="al ald" style="margin-bottom:8px;"><span>📅</span><span><b>${overdueAppt.length} คน</b> เกินวันนัดแล้ว</span></div>`:''}
     <div class="ch">
       <span class="ct">📥 คิวพยาบาลคัดกรอง</span>
       <span class="pill pr">${pending.length} ราย</span>
@@ -2050,7 +2088,7 @@ function vNurseQueue(){
           </span>
           <span>${assessed?'<span class="pill pg" style="font-size:10px;">✅ ส่งแบบประเมินแล้ว</span>':'<span class="pill py" style="font-size:10px;">⏳ ยังไม่ประเมิน</span>'}</span>
         </div>
-        <div style="font-size:12px;color:var(--tm);">📅 ${fmt(v.date)} · ACT: ${v.actScore||'–'} · หอบ: ${v.daytime||0}/${v.nighttime||0} · บันทึกโดย: ${v.by==='nurse'?'พยาบาล'+(v.nurseName?' ('+v.nurseName+')':''):v.by||'ผู้ป่วย'}</div>
+        <div style="font-size:12px;color:var(--tm);">📅 ${fmt(v.date)} · ACT: ${v.actScore||'–'} · หอบ: ${v.daytime||0}/${v.nighttime||0} · บันทึกโดย: ${v.by==='nurse'?'พยาบาล'+(v.nurseName?' ('+v.nurseName+')':''):v.by||'ผู้ป่วย'}${v.referralReason?' · 📋 '+{routine:'ปกติ',poor_control:'คุมไม่ได้',consult_drug:'ปรับยา',technique:'สอนพ่นยา',side_effect:'ผลข้าง',er_admit:'หลัง ER',other:'อื่นๆ'}[v.referralReason]||v.referralReason:''}${apptBadge(getLastAppt(v.hn))?' · '+apptBadge(getLastAppt(v.hn)):''}</div>
         ${assessSummaryHTML(v)}
       </div>`;}).join('')}
   </div>`);
@@ -2065,7 +2103,7 @@ function clearQueue(role){
   const statusMap={nurse:'pending_nurse',pharm:'pending_pharm',doctor:'pending_doctor'};
   const st=statusMap[role];
   if(!st||!confirm('เคลียร์คิวทั้งหมด? (จะ mark ว่าเสร็จสิ้น)')) return;
-  DB.visits.filter(v=>v.status===st).forEach(v=>{v.status='done';v.clearedAt=new Date().toISOString();});
+  DB.visits.filter(v=>v.status===st).forEach(v=>{v.status='done';v.clearedAt=new Date().toISOString();v.clearedBy=SESSION.userName||SESSION.userId;});
   saveDB();
   if(role==='nurse') vNurseQueue();
   else if(role==='doctor') vDoctorSummary();
@@ -2136,6 +2174,18 @@ function openNurseVerify(vid){
     <div class="fg"><label>บันทึกพยาบาล / แผนการรักษา</label>
       <textarea id="nv-notes" placeholder="บันทึกเพิ่มเติม...">${v.nurseNotes||''}</textarea>
     </div>
+    <div class="fg"><label>📋 เหตุผลส่งต่อ (เภสัช/แพทย์)</label>
+      <select id="nv-referral">
+        <option value="" ${!v.referralReason?'selected':''}>ไม่ระบุ</option>
+        <option value="routine" ${v.referralReason==='routine'?'selected':''}>รับยาตามนัดปกติ</option>
+        <option value="poor_control" ${v.referralReason==='poor_control'?'selected':''}>ควบคุมอาการไม่ได้</option>
+        <option value="consult_drug" ${v.referralReason==='consult_drug'?'selected':''}>ปรับยา / ปรึกษาเรื่องยา</option>
+        <option value="technique" ${v.referralReason==='technique'?'selected':''}>สอนเทคนิคพ่นยา</option>
+        <option value="side_effect" ${v.referralReason==='side_effect'?'selected':''}>ผลข้างเคียงยา</option>
+        <option value="er_admit" ${v.referralReason==='er_admit'?'selected':''}>มาหลัง ER/Admit</option>
+        <option value="other" ${v.referralReason==='other'?'selected':''}>อื่นๆ (ระบุในบันทึก)</option>
+      </select>
+    </div>
 
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
       <button class="btn bs" onclick="saveNurseVerify()">💾 บันทึกยืนยัน</button>
@@ -2155,6 +2205,7 @@ function saveNurseVerify(){
   v.ginaStep=document.getElementById('nv-gina').value||null;
   v.rescueLeft=document.getElementById('nv-rescue-left').value;
   v.nurseNotes=document.getElementById('nv-notes').value;
+  v.referralReason=document.getElementById('nv-referral')?.value||'';
   v.returnedInhalers=_nvReturns.slice();
   v.nurseVerified=true;
   v.nurseAt=new Date().toISOString();
@@ -3266,7 +3317,7 @@ function renderPhHistTable(data){
   ${data.map(d=>`<tr>
     <td>${fmt(d.date)}</td><td><strong>${d.hn}</strong></td><td>${d.name||'–'}</td>
     <td>${(d.drugs||[]).map(dr=>`${dr.drug||'–'} (${dr.canisters?.filter(c=>!c.isOld).length||0} กระบอกใหม่)`).join('<br>')}</td>
-    <td>${fmt(d.nextAppt)}</td>
+    <td>${fmt(d.nextAppt)} ${apptBadge(d.nextAppt)}</td>
     <td><button class="btn bp bsm" onclick="rePrintDisp('${d.id}')">🖨️ พิมพ์</button></td>
   </tr>`).join('')}</tbody></table>`;
 }
@@ -4044,6 +4095,17 @@ function vDrugDB(){
           <div class="fg"><label>ประเภทการใช้</label>
             <select id="dm-cat"><option value="rescue">🔴 ยาฉุกเฉิน (Rescue)</option><option value="controller">🟢 ยาควบคุม (Controller)</option></select>
           </div>
+          <div class="fg"><label>ความถี่ (Frequency)</label>
+            <select id="dm-freq">
+              <option value="">ไม่ระบุ</option>
+              <option value="PRN">PRN (เมื่อมีอาการ)</option>
+              <option value="OD">OD (วันละ 1 ครั้ง)</option>
+              <option value="BID">BID (วันละ 2 ครั้ง)</option>
+              <option value="TID">TID (วันละ 3 ครั้ง)</option>
+              <option value="QID">QID (วันละ 4 ครั้ง)</option>
+            </select>
+          </div>
+          <div class="fg"><label>วิธีใช้ / จำนวน puffs</label><input id="dm-route" placeholder="เช่น 1-2 puffs inhaled PRN"></div>
           <div class="fg"><label>Brand name</label><input id="dm-brand" placeholder="Brand"></div>
           <div class="fg"><label>สี (hex)</label><input type="color" id="dm-color" value="#2196F3"></div>
         </div>
@@ -4055,10 +4117,12 @@ function vDrugDB(){
 let editDrugId='';
 function renderDrugTable(){
   if(!DB.drugs.length) return '<div style="padding:20px;text-align:center;color:var(--tm);">ยังไม่มียาในฐานข้อมูล</div>';
-  return`<table><thead><tr><th>ชื่อยา</th><th>Dose</th><th>Puffs/กระบอก</th><th>ประเภท</th><th>การใช้</th><th>จัดการ</th></tr></thead><tbody>
+  return`<table><thead><tr><th>ชื่อยา</th><th>Dose</th><th>Puffs/กระบอก</th><th>Frequency</th><th>วิธีใช้</th><th>ประเภท</th><th>การใช้</th><th>จัดการ</th></tr></thead><tbody>
   ${DB.drugs.map(d=>`<tr>
     <td><strong>${d.name}</strong><br><small style="color:var(--tm)">${d.brand||''}</small></td>
     <td>${d.dose} mcg</td><td>${d.puffs}</td>
+    <td>${d.freq?`<span class="pill pb">${d.freq}</span>`:'–'}</td>
+    <td style="font-size:12px;color:var(--tm);">${d.route||'–'}</td>
     <td><span class="pill pb" style="background:${d.color}22;color:${d.color}">${d.type}</span></td>
     <td><span class="pill ${d.cat==='rescue'?'pr':'pg'}">${d.cat==='rescue'?'🔴 ฉุกเฉิน':'🟢 ควบคุม'}</span></td>
     <td>
@@ -4076,6 +4140,8 @@ function openDrugModal(id){
   document.getElementById('dm-puffs').value=d?.puffs||200;
   document.getElementById('dm-type').value=d?.type||'SABA';
   document.getElementById('dm-cat').value=d?.cat||'rescue';
+  document.getElementById('dm-freq').value=d?.freq||'';
+  document.getElementById('dm-route').value=d?.route||'';
   document.getElementById('dm-brand').value=d?.brand||'';
   document.getElementById('dm-color').value=d?.color||'#2196F3';
   document.getElementById('drug-modal').classList.add('on');
@@ -4087,6 +4153,7 @@ function saveDrug(){
   const obj={id:editDrugId||uid(),name,dose:document.getElementById('dm-dose').value,
     puffs:+document.getElementById('dm-puffs').value,type:document.getElementById('dm-type').value,
     cat:document.getElementById('dm-cat').value,brand:document.getElementById('dm-brand').value,
+    freq:document.getElementById('dm-freq').value,route:document.getElementById('dm-route').value,
     color:document.getElementById('dm-color').value,
     price:+document.getElementById('dm-price').value||0};
   if(editDrugId){const i=DB.drugs.findIndex(d=>d.id===editDrugId);if(i>=0)DB.drugs[i]=obj;}
@@ -4364,7 +4431,7 @@ function vPatients(){
   <div class="card">
     <div class="ch"><span class="ct">👥 ทะเบียนผู้ป่วย</span><button class="btn bp bsm" onclick="openAddPt()">+ เพิ่มผู้ป่วย</button></div>
     <input placeholder="🔍 HN หรือชื่อ..." style="width:100%;padding:9px 12px;border:1.5px solid var(--bd);border-radius:7px;margin-bottom:12px;font-size:13px;" oninput="filterPt(this.value)">
-    <div class="tw" id="pt-body">${renderPtTable(DB.patients)}</div>
+    <div class="tw" id="pt-body">${renderPtTable(DB.patients.filter(p=>!p.deleted))}</div>
   </div>
   <div class="mo" id="pt-modal">
     <div class="mb"><div class="mh"><h3>เพิ่มผู้ป่วย</h3><button class="mx" onclick="document.getElementById('pt-modal').classList.remove('on')">×</button></div>
@@ -4408,7 +4475,7 @@ function renderPtTable(pts){
     const relText=(p.reliever||p.controller)?`<div style="font-size:11px;color:var(--tm);margin-top:2px;">${p.reliever?'💨'+p.reliever:''}${p.reliever&&p.controller?' / ':''}${p.controller?'🔵'+p.controller:''}</div>`:'';
     return`<tr><td><strong>${p.hn}</strong></td><td>${p.name}${relText}</td><td>${age}</td>
     <td><span class="pill pb">${p.dx||'–'}</span></td><td>${lv?fmt(lv.date||lv.createdAt):'ยังไม่มี'}</td>
-    <td><button class="btn bp bsm" onclick="openPhDisp('${p.hn}','')">💊 จ่ายยา</button></td></tr>`;}).join('')}
+    <td style="display:flex;gap:4px;flex-wrap:wrap;"><button class="btn bp bsm" onclick="openPhDisp('${p.hn}','')">💊 จ่ายยา</button><button class="btn bd2 bsm" onclick="softDeletePt('${p.id}')">🗑️</button></td></tr>`;}).join('')}
   </tbody></table>`;
 }
 
@@ -4572,12 +4639,46 @@ function openAddPt(){
   setTimeout(()=>document.getElementById('pt-hn')?.focus(),80);
 }
 function addPt(){
-  const hn=document.getElementById('pt-hn').value.trim();const name=document.getElementById('pt-name').value.trim();
+  const hn=document.getElementById('pt-hn').value.trim();
+  const name=document.getElementById('pt-name').value.trim();
   if(!hn||!name){toast('กรุณากรอก HN และชื่อ','e');return;}
-  if(DB.patients.find(p=>p.hn===hn)){toast('HN นี้มีอยู่แล้ว','e');return;}
-  DB.patients.push({id:uid(),hn,name,dob:document.getElementById('pt-dob').value,gender:document.getElementById('pt-sex').value,phone:document.getElementById('pt-phone').value,dx:document.getElementById('pt-dx').value,reliever:getDrugNames('reliever'),controller:getDrugNames('controller'),createdAt:new Date().toISOString()});
+  const dupActive=DB.patients.find(p=>!p.deleted&&normHN(p.hn)===normHN(hn));
+  if(dupActive){toast('HN '+hn+' มีอยู่แล้ว ('+dupActive.name+')','e');return;}
+  const dupDel=DB.patients.find(p=>p.deleted&&normHN(p.hn)===normHN(hn));
+  if(dupDel&&!confirm('HN '+hn+' เคยถูกลบไปแล้ว ('+dupDel.name+')\nต้องการเพิ่มใหม่หรือไม่?'))return;
+  const dob=document.getElementById('pt-dob').value;
+  if(dob){
+    const age=Math.floor((Date.now()-new Date(dob))/(365.25*86400000));
+    if(new Date(dob)>new Date()){toast('วันเกิดไม่ถูกต้อง: ไม่ควรเป็นวันในอนาคต','e');return;}
+    if(age>120){toast('วันเกิดไม่ถูกต้อง: อายุเกิน 120 ปี','e');return;}
+  }
+  DB.patients.push({id:uid(),hn,name,dob,gender:document.getElementById('pt-sex').value,phone:document.getElementById('pt-phone').value,dx:document.getElementById('pt-dx').value,reliever:getDrugNames('reliever'),controller:getDrugNames('controller'),createdAt:new Date().toISOString()});
   saveDB();document.getElementById('pt-modal').classList.remove('on');
-  document.getElementById('pt-body').innerHTML=renderPtTable(DB.patients);toast('เพิ่มผู้ป่วยแล้ว ✅');
+  document.getElementById('pt-body').innerHTML=renderPtTable(DB.patients.filter(p=>!p.deleted));
+  toast('เพิ่มผู้ป่วยแล้ว ✅');
+}
+function softDeletePt(id){
+  const p=DB.patients.find(x=>x.id===id);if(!p)return;
+  if(!confirm('ซ่อนผู้ป่วย '+p.name+' (HN: '+p.hn+')?\nยังกู้คืนได้ใน Admin → ถังขยะ'))return;
+  p.deleted=true;p.deletedAt=new Date().toISOString();p.deletedBy=SESSION.userName||SESSION.userId;
+  saveDB();document.getElementById('pt-body').innerHTML=renderPtTable(DB.patients.filter(p=>!p.deleted));
+  toast('ซ่อนข้อมูลผู้ป่วยแล้ว — กู้คืนได้ใน Admin');
+}
+function restorePt(id){
+  const p=DB.patients.find(x=>x.id===id);if(!p)return;
+  delete p.deleted;delete p.deletedAt;delete p.deletedBy;
+  saveDB();vTrash();toast('กู้คืนข้อมูลแล้ว ✅');
+}
+function vTrash(){
+  const del=DB.patients.filter(p=>p.deleted);
+  setContent(`<div class="card">
+    <div class="ch"><span class="ct">🗑️ ถังขยะ — ผู้ป่วยที่ถูกซ่อน</span></div>
+    ${!del.length?'<div style="text-align:center;padding:24px;color:var(--tm);">ไม่มีข้อมูลที่ถูกซ่อน ✅</div>':
+    '<div class="tw"><table><thead><tr><th>HN</th><th>ชื่อ</th><th>ซ่อนเมื่อ</th><th>โดย</th><th></th></tr></thead><tbody>'+
+    del.map(p=>`<tr><td><strong>${p.hn}</strong></td><td>${p.name}</td><td style="font-size:12px;">${p.deletedAt?fmtShort(p.deletedAt):'–'}</td><td style="font-size:12px;">${p.deletedBy||'–'}</td>
+    <td><button class="btn bs bsm" onclick="restorePt('${p.id}')">♻️ กู้คืน</button></td></tr>`).join('')+
+    '</tbody></table></div>'}
+  </div>`);
 }
 
 // ---- SETTINGS ----
@@ -4628,6 +4729,17 @@ function vSettings(){
       5. กด "ดึงข้อมูลจาก Cloud" เพื่อทดสอบ
     </div>
     <hr style="margin:20px 0;">
+    <h3 style="margin-bottom:12px;color:var(--pd);">💾 สำรองข้อมูล (Backup)</h3>
+    <div class="al ali" style="margin-bottom:10px;"><span>ℹ️</span><span>แนะนำ Export สำรองข้อมูลทุกสัปดาห์ เพื่อป้องกันข้อมูลสูญหาย</span></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn bs" onclick="exportBackup('json')">⬇️ Export JSON (ข้อมูลทั้งหมด)</button>
+      <button class="btn bp" onclick="exportBackup('xlsx')">⬇️ Export Excel (ผู้ป่วย+Visit)</button>
+    </div>
+    <hr style="margin:20px 0;">
+    <h3 style="margin-bottom:12px;color:var(--pd);">📥 นำเข้าข้อมูล (Restore)</h3>
+    <div class="al alw" style="margin-bottom:10px;"><span>⚠️</span><span>การนำเข้า JSON จะ <b>ทับข้อมูลปัจจุบัน</b> ทั้งหมด ควร Export สำรองไว้ก่อน</span></div>
+    <input type="file" id="restore-file" accept=".json" style="margin-bottom:8px;" onchange="importBackup(this)">
+    <hr style="margin:20px 0;">
     <h3 style="margin-bottom:12px;color:var(--pd);">🔄 รีเซ็ตข้อมูล</h3>
     <div class="al ald"><span>⚠️</span><span>การรีเซ็ตจะลบข้อมูลทั้งหมดออกจาก browser นี้</span></div>
     <button class="btn bd2" onclick="if(confirm('ยืนยันลบข้อมูลทั้งหมด?')){localStorage.removeItem('${SK}');location.reload();}">🗑️ รีเซ็ตข้อมูลทั้งหมด</button>
@@ -4666,6 +4778,78 @@ function saveSettings(){
   const dr=document.getElementById('set-doctor').value;const a=document.getElementById('set-admin').value;
   if(n)DB.users.nurse=n;if(p)DB.users.pharmacist=p;if(dr)DB.users.doctor=dr;if(a)DB.users.admin=a;
   saveDB();toast('บันทึกรหัสผ่านแล้ว ✅');
+}
+
+// ---- APPOINTMENT HELPERS ----
+function daysUntil(dateStr){
+  if(!dateStr) return null;
+  return Math.ceil((new Date(dateStr).setHours(0,0,0,0)-new Date().setHours(0,0,0,0))/86400000);
+}
+function apptBadge(dateStr){
+  const d=daysUntil(dateStr);
+  if(d===null) return '';
+  if(d<0) return `<span class="pill pr" style="font-size:10px;">❌ เกินนัด ${Math.abs(d)} วัน</span>`;
+  if(d===0) return `<span class="pill py" style="font-size:10px;">⚡ นัดวันนี้</span>`;
+  if(d<=7) return `<span class="pill py" style="font-size:10px;">📅 อีก ${d} วัน</span>`;
+  return `<span class="pill pg" style="font-size:10px;">📅 อีก ${d} วัน</span>`;
+}
+function getLastAppt(hn){
+  const d=DB.dispensing.filter(x=>x.hn===hn&&x.nextAppt).sort((a,b)=>new Date(b.date)-new Date(a.date))[0];
+  return d?.nextAppt||null;
+}
+function vAppointments(){
+  const today=new Date().setHours(0,0,0,0);
+  const pts=DB.patients.filter(p=>!p.deleted);
+  const rows=pts.map(p=>{
+    const appt=getLastAppt(p.hn);
+    const d=daysUntil(appt);
+    return{p,appt,d};
+  }).filter(r=>r.appt).sort((a,b)=>(a.d??999)-(b.d??999));
+  const overdue=rows.filter(r=>r.d<0);
+  const soon=rows.filter(r=>r.d>=0&&r.d<=7);
+  const upcoming=rows.filter(r=>r.d>7);
+  setContent(`<div class="card">
+    <div class="ch"><span class="ct">📅 ระบบนัดหมาย</span></div>
+    ${overdue.length?`<div class="al ald" style="margin-bottom:10px;"><span>❌</span><span><b>${overdue.length} คน เกินวันนัดแล้ว</b></span></div>`:''}
+    ${soon.length?`<div class="al alw" style="margin-bottom:10px;"><span>⚠️</span><span><b>${soon.length} คน นัดภายใน 7 วัน</b></span></div>`:''}
+    <div class="tw"><table><thead><tr><th>HN</th><th>ชื่อ</th><th>โรค</th><th>วันนัด</th><th>สถานะ</th><th>Action</th></tr></thead><tbody>
+    ${rows.length?rows.map(({p,appt,d})=>`<tr>
+      <td><strong>${p.hn}</strong></td><td>${p.name}</td>
+      <td><span class="pill pb">${p.dx||'–'}</span></td>
+      <td>${fmt(appt)}</td>
+      <td>${apptBadge(appt)}</td>
+      <td><button class="btn bp bsm" onclick="openPhDisp('${p.hn}','')">💊 จ่ายยา</button></td>
+    </tr>`).join(''):'<tr><td colspan="6" style="text-align:center;color:var(--tm);padding:20px;">ไม่มีข้อมูลนัด</td></tr>'}
+    </tbody></table></div>
+  </div>`);
+}
+
+// ---- BACKUP / RESTORE ----
+function exportBackup(type){
+  const ts=new Date().toISOString().slice(0,10);
+  if(type==='json'){
+    const blob=new Blob([JSON.stringify(DB,null,2)],{type:'application/json'});
+    const a=document.createElement('a');a.href=URL.createObjectURL(blob);
+    a.download='asthma_backup_'+ts+'.json';a.click();
+    toast('Export JSON เรียบร้อย ✅');
+  } else if(type==='xlsx'&&window.XLSX){
+    const wb=XLSX.utils.book_new();
+    const ptWs=XLSX.utils.json_to_sheet(DB.patients.filter(p=>!p.deleted).map(p=>({HN:p.hn,ชื่อ:p.name,วันเกิด:p.dob||'',เพศ:p.gender||'',โทร:p.phone||'',โรค:p.dx||'',Reliever:p.reliever||'',Controller:p.controller||''})));
+    XLSX.utils.book_append_sheet(wb,ptWs,'ผู้ป่วย');
+    const vsWs=XLSX.utils.json_to_sheet(DB.visits.map(v=>({วันที่:v.date||'',HN:v.hn,ชื่อ:v.name||'',สถานะ:v.status||'',ACT:v.actScore||'',หอบกลางวัน:v.daytime||0,หอบกลางคืน:v.nighttime||0,ER:v.erCount||0})));
+    XLSX.utils.book_append_sheet(wb,vsWs,'Visit');
+    const dispWs=XLSX.utils.json_to_sheet(DB.dispensing.map(d=>({วันที่:d.date||'',HN:d.hn,ชื่อ:d.name||'',วันนัด:d.nextAppt||''})));
+    XLSX.utils.book_append_sheet(wb,dispWs,'จ่ายยา');
+    XLSX.writeFile(wb,'asthma_backup_'+ts+'.xlsx');
+    toast('Export Excel เรียบร้อย ✅');
+  } else {toast('ไม่พบ XLSX library','e');}
+}
+function importBackup(input){
+  const file=input.files[0];if(!file)return;
+  if(!confirm('นำเข้าข้อมูลจาก '+file.name+'?\nข้อมูลปัจจุบันจะถูกทับทั้งหมด'))return;
+  const reader=new FileReader();
+  reader.onload=e=>{try{const d=JSON.parse(e.target.result);if(!d.patients)throw new Error('ไฟล์ไม่ถูกต้อง');DB=d;saveDB();toast('นำเข้าข้อมูลเรียบร้อย — รีโหลดหน้า','s');setTimeout(()=>location.reload(),1500);}catch(err){toast('ไฟล์ไม่ถูกต้อง: '+err.message,'e');}};
+  reader.readAsText(file);
 }
 
 // ---- TOAST ----
