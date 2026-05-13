@@ -604,7 +604,19 @@ function thaiDateLabel(iso){
 function syncThaiLabel(id){
   const el=document.getElementById(id);
   const lbl=document.getElementById(id+'-th');
-  if(el&&lbl)lbl.textContent=thaiDateLabel(el.value);
+  if(!el||!lbl)return;
+  const thai=thaiDateLabel(el.value);
+  let extra='';
+  if(id.includes('next')||id.includes('appt')){
+    const d=daysUntil(el.value);
+    if(d!==null){
+      if(d<0)extra=`<span style="color:#c62828;font-weight:700;margin-left:6px;">❌ เกินนัด ${Math.abs(d)} วัน</span>`;
+      else if(d===0)extra=`<span style="color:#e65100;font-weight:700;margin-left:6px;">⚡ นัดวันนี้!</span>`;
+      else if(d<=7)extra=`<span style="color:#e65100;font-weight:700;margin-left:6px;">📅 อีก ${d} วัน</span>`;
+      else extra=`<span style="color:#2e7d32;font-weight:700;margin-left:6px;">📅 อีก ${d} วัน</span>`;
+    }
+  }
+  lbl.innerHTML=thai+extra;
 }
 function diffDays(a,b){return Math.round((new Date(b)-new Date(a))/(86400000));}
 
@@ -1912,16 +1924,16 @@ function submitAssess(){
 
 // ==================== GINA / GOLD CLINICAL DATA ====================
 const GINA_RECS=[
-  {step:1,drugs:'ICS-Formoterol ขนาดต่ำ PRN (preferred)\nหรือ SABA PRN เท่านั้น',note:'ไม่มียา Controller ประจำ หรือ Low-dose ICS อย่างเดียว'},
-  {step:2,drugs:'ICS ขนาดต่ำ daily\n• Budesonide (Pulmicort) 200–400 mcg/วัน\n• Fluticasone (Flixotide) 100–200 mcg/วัน',note:'Reliever: SABA PRN (Salbutamol)'},
-  {step:3,drugs:'ICS/LABA ขนาดต่ำ daily\n• Budesonide/Formoterol (Symbicort) 80/4.5 × 2/วัน\n• Fluticasone/Salmeterol (Seretide) 25/50 × 2/วัน\nหรือ ICS ขนาดกลาง (Budesonide 400–800 mcg/วัน)',note:'Reliever: SABA PRN'},
-  {step:4,drugs:'ICS/LABA ขนาดกลาง-สูง daily\n• Budesonide/Formoterol (Symbicort) 160/4.5 × 2/วัน\n• Fluticasone/Salmeterol (Seretide) 25/125 × 2/วัน\nพิจารณาเพิ่ม LAMA (Tiotropium)',note:'Reliever: SABA PRN'},
-  {step:5,drugs:'High-dose ICS/LABA + LAMA (Tiotropium/Spiriva)\n± Biologic (Anti-IL5, Anti-IgE) ตาม phenotype',note:'⚠️ ควรส่งต่อผู้เชี่ยวชาญ / Pulmonologist'},
+  {step:1,drugs:'🟢 Track 1 (preferred – AIR): Low-dose ICS-Formoterol PRN เป็น Reliever เพียงอย่างเดียว\n  • Budesonide/Formoterol (Symbicort) 80/4.5 — พ่นเมื่อมีอาการ\n🔵 Track 2: SABA PRN เท่านั้น (Salbutamol)\n  • ใช้ได้แต่ไม่แนะนำเป็น monotherapy ระยะยาว',note:'GINA 2024: ไม่แนะนำ SABA-only โดยไม่มี ICS เพราะเพิ่มความเสี่ยงกำเริบ'},
+  {step:2,drugs:'🟢 Track 1 (preferred): Low-dose ICS-Formoterol PRN\n  • Budesonide/Formoterol (Symbicort) 80/4.5 PRN\n🔵 Track 2: ICS ขนาดต่ำ daily + SABA PRN\n  • Budesonide (Pulmicort) 200–400 mcg/วัน\n  • Fluticasone (Flixotide) 100–200 mcg/วัน',note:'Reliever Track 1: ICS-Formoterol PRN | Track 2: SABA PRN'},
+  {step:3,drugs:'🟢 Track 1 (MART preferred): Low-dose ICS-Formoterol daily + PRN เป็น Reliever\n  • Budesonide/Formoterol (Symbicort) 80/4.5 × 2/วัน + PRN\n🔵 Track 2: ICS/LABA daily + SABA PRN\n  • Fluticasone/Salmeterol (Seretide) 25/50 × 2/วัน\n  • หรือ ICS ขนาดกลาง (Budesonide 400–800 mcg/วัน) + SABA PRN',note:'MART = Maintenance And Reliever Therapy · Reliever Track 1: ICS-Formoterol PRN | Track 2: SABA PRN'},
+  {step:4,drugs:'🟢 Track 1 (MART preferred): Medium/High-dose ICS-Formoterol daily + PRN\n  • Budesonide/Formoterol (Symbicort) 160/4.5 × 2/วัน + PRN\n🔵 Track 2: High-dose ICS/LABA daily + SABA PRN\n  • Fluticasone/Salmeterol (Seretide) 25/125 × 2/วัน\nพิจารณาเพิ่ม LAMA (Tiotropium/Spiriva) ทั้ง 2 Track',note:'Reliever Track 1: ICS-Formoterol PRN | Track 2: SABA PRN · ตรวจสอบ Adherence และ Technique ก่อน Step Up'},
+  {step:5,drugs:'High-dose ICS/LABA daily + LAMA (Tiotropium/Spiriva)\n± Biologic ตาม Phenotype:\n  • Anti-IL5: Mepolizumab, Benralizumab (Eosinophilic)\n  • Anti-IgE: Omalizumab (Allergic)\n  • Anti-IL4/IL13: Dupilumab\n  • Anti-TSLP: Tezepelumab (Severe unselected)\n± Azithromycin (สำหรับผู้ไม่สูบบุหรี่)',note:'⚠️ ควรส่งต่อผู้เชี่ยวชาญ / Pulmonologist · ตรวจ Blood Eosinophil, Total IgE ก่อนพิจารณา Biologic'},
 ];
 const GOLD_RECS={
-  A:{label:'Group A',treatment:'Bronchodilator ตัวเดียว',drugs:'SABA PRN (Salbutamol)\nหรือ LAMA: Tiotropium (Spiriva) 18 mcg/วัน',note:'ประเมินผลหลัง 4–6 สัปดาห์'},
-  B:{label:'Group B',treatment:'LAMA Monotherapy (preferred)',drugs:'Tiotropium (Spiriva) 18 mcg/วัน\nหรือ LAMA+LABA ถ้ายังมีอาการมาก',note:'เช่น Tiotropium + Formoterol'},
-  E:{label:'Group E',treatment:'LAMA + LABA Dual Bronchodilator',drugs:'LAMA+LABA combination\n± ICS ถ้า eosinophils ≥300 cells/μL หรือมี Asthma features',note:'พิจารณา Triple therapy (ICS/LABA/LAMA) ถ้ายังไม่ดีขึ้น'},
+  A:{label:'Group A',treatment:'Short-acting Bronchodilator PRN',drugs:'SABA PRN (Salbutamol) หรือ SAMA PRN (Ipratropium)\nหรือ LAMA/LABA monotherapy ถ้ามีอาการบ่อย',note:'GOLD 2024: ประเมินผลหลัง 4–6 สัปดาห์ · อาการน้อย (CAT<10 หรือ mMRC 0-1) ไม่มีประวัติกำเริบ'},
+  B:{label:'Group B',treatment:'LAMA + LABA Dual Bronchodilator (preferred)',drugs:'Tiotropium (Spiriva) 18 mcg/วัน + LABA\n  เช่น Tiotropium + Formoterol หรือ LAMA/LABA Fixed-dose\nหรือ LAMA monotherapy (Tiotropium 18 mcg/วัน) ถ้า symptoms น้อย',note:'GOLD 2024: LAMA+LABA เป็น preferred initial therapy สำหรับ Group B · อาการมาก (CAT≥10 หรือ mMRC≥2) ไม่มีประวัติกำเริบ'},
+  E:{label:'Group E',treatment:'LAMA + LABA Dual Bronchodilator',drugs:'LAMA+LABA combination (preferred)\n± ICS ถ้า Blood Eosinophils ≥300 cells/μL หรือมี Asthma overlap\nพิจารณา Triple therapy (ICS/LABA/LAMA) ถ้าอาการยังไม่ดีขึ้น',note:'GOLD 2024: กลุ่มเสี่ยงสูง (≥2 กำเริบ/ปี หรือ ≥1 Hospitalization) · ติดตามใกล้ชิด'},
 };
 function clinicalRecHTML(v,lastDisp){
   const dx=normalizeDx(v.dx||getPatDx(v.hn));
@@ -1938,12 +1950,14 @@ function clinicalRecHTML(v,lastDisp){
     if(act&&step){
       if(act<20||(v.erCount>0)){
         const ns=Math.min(step+1,5);const nd=GINA_RECS[ns-1];
+        const erNote=v.erCount>0&&act>=20?'⚠️ มีประวัติ ER แม้ ACT ≥20 — พิจารณา Step Up':'';
         recHtml=`<div style="background:#fff5f5;border:1px solid #ef9a9a;border-radius:7px;padding:10px 12px;margin-top:8px;">
-          <div style="font-weight:800;color:#c62828;margin-bottom:4px;">⬆️ พิจารณา Step Up → GINA Step ${ns}</div>
+          <div style="font-weight:800;color:#c62828;margin-bottom:4px;">⬆️ พิจารณา Step Up → GINA Step ${ns}${erNote?' ('+erNote+')':''}</div>
+          <div style="font-size:12px;color:#c62828;margin-bottom:6px;">⚠️ ก่อน Step Up: ตรวจสอบ Adherence · Inhaler Technique · Triggers ก่อนเสมอ</div>
           <div style="font-size:12px;line-height:1.7;white-space:pre-line;">${nd.drugs}</div>
           <div style="font-size:11px;color:#666;margin-top:4px;">📌 ${nd.note}</div></div>`;
       }else{
-        const ns=act===25&&step>1?step-1:step;
+        const ns=step>1?step-1:step;
         if(ns<step){
           const nd=GINA_RECS[ns-1];
           recHtml=`<div style="background:#e8f5e9;border:1px solid #a5d6a7;border-radius:7px;padding:10px 12px;margin-top:8px;">
@@ -1956,13 +1970,15 @@ function clinicalRecHTML(v,lastDisp){
       }
     }else if(act&&!step){
       const sg=act>=20?2:act>=15?3:4;const nd=GINA_RECS[sg-1];
+      const sgCtrl=act>=20?'Well Controlled':act>=15?'Partially Controlled':'Uncontrolled';
       recHtml=`<div style="background:#e8f2fc;border:1px solid #90caf9;border-radius:7px;padding:10px 12px;margin-top:8px;">
-        <div style="font-weight:800;color:var(--pd);margin-bottom:4px;">💡 แนะนำ GINA Step ${sg} (ประมาณจาก ACT Score)</div>
+        <div style="font-weight:800;color:var(--pd);margin-bottom:4px;">💡 แนะนำ GINA Step ${sg} (ประมาณจาก ACT ${act} — ${sgCtrl})</div>
+        <div style="font-size:12px;color:var(--tm);margin-bottom:6px;">📝 กรุณาระบุ GINA Step ปัจจุบันของผู้ป่วยเพื่อรับคำแนะนำ Step Up/Down ที่แม่นยำ</div>
         <div style="font-size:12px;line-height:1.7;white-space:pre-line;">${nd.drugs}</div>
         <div style="font-size:11px;color:#666;margin-top:4px;">📌 ${nd.note}</div></div>`;
     }
     html+=`<div style="background:#f0f4ff;border-radius:8px;padding:12px 14px;margin-bottom:8px;">
-      <div style="font-weight:800;color:var(--pd);margin-bottom:8px;font-size:13px;">🌬️ แนวทางคลินิก – Asthma${dx==='ACO'?' (ACO)':''} (GINA 2023)</div>
+      <div style="font-weight:800;color:var(--pd);margin-bottom:8px;font-size:13px;">🌬️ แนวทางคลินิก – Asthma${dx==='ACO'?' (ACO)':''} (GINA 2024)</div>
       <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:12.5px;margin-bottom:4px;">
         <span>📊 <b>ระดับการควบคุม:</b> <span style="color:${ctrlColor};font-weight:700;">${ctrlLvl}</span></span>
         ${step?`<span>🩺 <b>GINA Step ปัจจุบัน:</b> Step ${step}</span>`:'<span style="color:#888;">🩺 ยังไม่ระบุ GINA Step</span>'}
@@ -1971,7 +1987,7 @@ function clinicalRecHTML(v,lastDisp){
   if(isC){
     const cat=v.catScore;const mmrc=v.mmrc;const admits=v.admitCount||0;const er=v.erCount||0;
     let gg=null;
-    if(cat!=null){gg=(admits>0||er>=2)?'E':cat>=10?'B':'A';}
+    if(cat!=null||mmrc!=null){gg=(admits>0||er>=2)?'E':(cat>=10||mmrc>=2)?'B':'A';}
     const gr=gg?GOLD_RECS[gg]:null;
     let catLvl='',catColor='#888';
     if(cat!=null){
@@ -2325,6 +2341,8 @@ function openDrSummaryModal(vid){
   bodyEl.innerHTML=buildDrDetailHTML(v,lastDisp,actCls,actLbl,_vdx,adhLbl);
   modal.style.display='flex';
   modal.scrollTop=0;
+  // Init days-counter for doctor next-appt field
+  setTimeout(()=>syncThaiLabel('dr-next-'+v.id),0);
 }
 function buildDrDetailHTML(v,lastDisp,actCls,actLbl,_vdx,adhLbl){
   const _isA=_vdx==='Asthma'||_vdx==='ACO';
@@ -2376,9 +2394,35 @@ function buildDrDetailHTML(v,lastDisp,actCls,actLbl,_vdx,adhLbl){
     ${ta?`<div style="padding:10px;background:#e8f5e9;border-radius:7px;font-size:13px;margin-bottom:8px;"><b>💨 เทคนิคพ่นยา (${(ta.type||'mdi').toUpperCase()}):</b> <span style="font-weight:700;color:${ta.score>=6?'#2e7d32':ta.score>=4?'#e65100':'#c62828'};">${ta.score}/7</span>${ta.note?` – ${ta.note}`:''}</div>`:''}
     ${lastDisp?`<div style="padding:10px;background:var(--sl);border-radius:7px;font-size:13px;margin-bottom:8px;"><b>💊 ยาจ่ายครั้งล่าสุด (${fmt(lastDisp.date)}):</b><br>${(lastDisp.drugs||[]).map(d=>`${d.drug||'–'} – ${d.canisters?.filter(c=>!c.isOld).length||0} กระบอกใหม่ (หมด ${d.lastEmptyDate?fmtShort(d.lastEmptyDate):'–'})`).join('<br>')}</div>`:''}
     ${v.notes?`<div style="padding:10px;background:#f5f5f5;border-radius:7px;font-size:13px;margin-bottom:8px;"><b>💬 หมายเหตุผู้ป่วย:</b> ${v.notes}</div>`:''}
-    ${v.doctorPlan?`<div style="background:#fffde7;border-radius:7px;padding:10px;font-size:13px;margin-bottom:8px;"><b>🩺 Plan:</b> ${v.doctorPlan}</div>`:''}
-    ${v.doctorNote?`<div style="background:#e8f2fc;border-radius:7px;padding:10px;font-size:13px;margin-bottom:8px;"><b>📬 Note ถึงเภสัช:</b> ${v.doctorNote}</div>`:''}
     ${clinicalRecHTML(v,lastDisp)}
+    <div style="background:#f8f9ff;border:1.5px solid var(--bd);border-radius:10px;padding:14px 16px;margin-top:4px;">
+      <div style="font-weight:800;color:var(--pd);font-size:13px;margin-bottom:10px;">🩺 บันทึกแพทย์</div>
+      <div class="fg" style="margin-bottom:8px;">
+        <label style="font-size:12px;font-weight:700;">📋 Plan (แผนการรักษา)</label>
+        <textarea id="dr-plan-${v.id}" rows="2" placeholder="เช่น Adjust dose, Step up GINA, นัดติดตาม..."
+          style="width:100%;padding:9px 12px;border:1.5px solid var(--bd);border-radius:7px;font-size:13px;font-family:inherit;resize:vertical;">${v.doctorPlan||''}</textarea>
+      </div>
+      <div class="fg" style="margin-bottom:10px;">
+        <label style="font-size:12px;font-weight:700;">📬 Note ถึงเภสัช</label>
+        <div id="dr-note-chips-${v.id}" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:6px;">
+          ${['ปรับยา','Step Up','Step Down','สอนเทคนิค','ระวัง Side Effect','อื่นๆ (ระบุ)'].map(t=>`<button type="button" onclick="drNoteChip('${v.id}','${t}')" style="padding:3px 8px;border:1px solid var(--p);border-radius:12px;font-size:11px;background:#fff;color:var(--p);cursor:pointer;">${t}</button>`).join('')}
+        </div>
+        <textarea id="dr-note-${v.id}" rows="2" placeholder="ระบุ Note ถึงเภสัชกร..."
+          style="width:100%;padding:9px 12px;border:1.5px solid var(--bd);border-radius:7px;font-size:13px;font-family:inherit;resize:vertical;">${v.doctorNote||''}</textarea>
+      </div>
+      <div class="fg" style="margin-bottom:12px;">
+        <label style="font-size:12px;font-weight:700;">📅 วันนัดครั้งถัดไป (แพทย์กำหนด)</label>
+        <input type="date" id="dr-next-${v.id}" value="${v.doctorNextAppt||addDays(today(),90).toISOString().split('T')[0]}"
+          onchange="syncThaiLabel('dr-next-${v.id}')"
+          style="width:100%;padding:9px 12px;border:1.5px solid var(--bd);border-radius:7px;font-size:13px;font-family:inherit;">
+        <div id="dr-next-${v.id}-th" style="font-size:12px;color:var(--p);margin-top:3px;font-weight:600;"></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn bp" onclick="saveDrPlan('${v.id}')">💾 บันทึก Plan</button>
+        <button class="btn bs" onclick="fwdDrToPharm('${v.id}')">➡️ ส่งต่อเภสัช</button>
+        <button class="btn bgray" onclick="closeModal('dr-summary-modal')">✖ ปิด</button>
+      </div>
+    </div>
   </div>`;}
 function openDrSummary(vid){
   const v=DB.visits.find(x=>x.id===vid);if(!v)return;
@@ -2464,8 +2508,12 @@ function saveDrPlan(vid){
   const v=DB.visits.find(x=>x.id===vid);if(!v)return;
   v.doctorPlan=document.getElementById('dr-plan-'+vid)?.value||'';
   v.doctorNote=document.getElementById('dr-note-'+vid)?.value||'';
+  const drNext=document.getElementById('dr-next-'+vid)?.value||'';
+  if(drNext) v.doctorNextAppt=drNext;
   v.doctorAt=new Date().toISOString();
   if(v.status==='pending_doctor') v.status='pending_pharm';
+  // Propagate doctorNextAppt to patient record as nextAppt (pre-fill for pharmacist)
+  if(drNext){const p=DB.patients.find(x=>x.hn===v.hn);if(p)p.nextAppt=drNext;}
   saveDB();toast('บันทึกแล้ว ✅');
 }
 function drNoteChip(vid,text){
@@ -2644,15 +2692,25 @@ function openPhDisp(hn,vid){
   const altVisit=DB.visits.filter(x=>x.hn===hn).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))[0];
   const resolvedName=(v?.name)||(ptRec?.name)||(altVisit?.name)||'';
   if(resolvedName) document.getElementById('ph-name').value=resolvedName;
-  if(v?.nextAppt){document.getElementById('ph-next').value=v.nextAppt||'';syncThaiLabel('ph-next');}
+  // Pre-fill next appt: prefer doctor's prescription, fallback to last recorded
+  const prefillAppt=v?.doctorNextAppt||v?.nextAppt||'';
+  if(prefillAppt){document.getElementById('ph-next').value=prefillAppt;syncThaiLabel('ph-next');}
+  else{syncThaiLabel('ph-next');}// still show days counter for default value
   // Reset returned inhalers
   _phReturns=(v?.returnedInhalers||[]).slice();
   setTimeout(()=>{renderPhReturnList();},100);
   // Priority: import drugs > history > blank
   // Show doctor note if exists
   const noteBanner=document.getElementById('ph-doctor-note-banner');
-  if(noteBanner&&v&&v.doctorNote){
-    noteBanner.innerHTML=`<div class="al alw" style="margin-bottom:12px;"><span>📬</span><div><strong>Note จากแพทย์:</strong><br><span style="font-size:13px;">${v.doctorNote}</span></div></div>`;
+  if(noteBanner&&v&&(v.doctorNote||v.doctorPlan||v.doctorNextAppt)){
+    const dNext=daysUntil(v.doctorNextAppt);
+    const dCol=dNext===null?'#666':dNext<0?'#c62828':dNext<=7?'#e65100':'#2e7d32';
+    const dLabel=dNext===null?'':dNext<0?'เกินนัด '+Math.abs(dNext)+' วัน':dNext===0?'วันนี้!':'อีก '+dNext+' วัน';
+    const apptLine=v.doctorNextAppt?'<div style="font-size:13px;">📅 วันนัด: <b>'+fmtShort(v.doctorNextAppt)+'</b>'+(dNext!==null?' <span style="color:'+dCol+';font-weight:700;">('+dLabel+')</span>':'')+'</div>':'';
+    noteBanner.innerHTML='<div class="al alw" style="margin-bottom:12px;"><span>🩺</span><div>'
+      +(v.doctorPlan?'<div><strong>Plan แพทย์:</strong> <span style="font-size:13px;">'+v.doctorPlan+'</span></div>':'')
+      +(v.doctorNote?'<div><strong>Note:</strong> <span style="font-size:13px;">'+v.doctorNote+'</span></div>':'')
+      +apptLine+'</div></div>';
   }
   // Rescue inhaler summary from nurse assessment
   const rescueBanner=document.getElementById('ph-rescue-banner');
